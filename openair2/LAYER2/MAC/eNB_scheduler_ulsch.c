@@ -452,6 +452,7 @@ rx_sdu(const module_id_t enb_mod_idP,
                   CC_idP,
                   old_rnti,
                   old_UE_id);
+            cancel_ra_proc(enb_mod_idP, CC_idP, frameP, current_rnti);
             UE_id = old_UE_id;
             current_rnti = old_rnti;
             /* Clear timer */
@@ -473,10 +474,6 @@ rx_sdu(const module_id_t enb_mod_idP,
             UE_template_ptr->ul_SR = 1;
             UE_scheduling_control->crnti_reconfigurationcomplete_flag = 1;
             UE_info->UE_template[UE_PCCID(enb_mod_idP, UE_id)][UE_id].configured = 1;
-            cancel_ra_proc(enb_mod_idP,
-                           CC_idP,
-                           frameP,
-                           current_rnti);
           } else {
             /* TODO: if the UE did random access (followed by a MAC uplink with
              * CRNTI) because none of its scheduling request was granted, then

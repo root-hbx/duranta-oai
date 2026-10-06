@@ -254,7 +254,7 @@ void phy_config_afterHO_ue(module_id_t Mod_id,uint8_t CC_id,uint8_t eNB_id, LTE_
     fp->pusch_config_common.ul_ReferenceSignalsPUSCH.groupHoppingEnabled    = radioResourceConfigCommon->pusch_ConfigCommon.ul_ReferenceSignalsPUSCH.groupHoppingEnabled;
     fp->pusch_config_common.ul_ReferenceSignalsPUSCH.groupAssignmentPUSCH   = radioResourceConfigCommon->pusch_ConfigCommon.ul_ReferenceSignalsPUSCH.groupAssignmentPUSCH;
     fp->pusch_config_common.ul_ReferenceSignalsPUSCH.sequenceHoppingEnabled = radioResourceConfigCommon->pusch_ConfigCommon.ul_ReferenceSignalsPUSCH.sequenceHoppingEnabled;
-    fp->pusch_config_common.ul_ReferenceSignalsPUSCH.cyclicShift            = radioResourceConfigCommon->pusch_ConfigCommon.ul_ReferenceSignalsPUSCH.cyclicShift;
+    fp->pusch_config_common.ul_ReferenceSignalsPUSCH.cyclicShift            = dmrs1_tab_ue[radioResourceConfigCommon->pusch_ConfigCommon.ul_ReferenceSignalsPUSCH.cyclicShift];
     init_ul_hopping(fp);
     fp->soundingrs_ul_config_common.enabled_flag                        = 0;
 
@@ -293,17 +293,41 @@ void phy_config_afterHO_ue(module_id_t Mod_id,uint8_t CC_id,uint8_t eNB_id, LTE_
       fp->phich_config_common.phich_duration = radioResourceConfigCommon->phich_Config->phich_Duration;
     }
 
-    //Target CellId
+    //Target CellId: regenerate the cell-specific sequences and mappings as after initial synchronization
     fp->Nid_cell = mobilityControlInfo->targetPhysCellId;
     fp->nushift  = fp->Nid_cell%6;
+    lte_gold(fp, PHY_vars_UE_g[Mod_id][CC_id]->lte_gold_table[0], fp->Nid_cell);
+    generate_pcfich_reg_mapping(fp);
+    generate_phich_reg_mapping(fp);
     // PUCCH
     init_ncs_cell(fp,PHY_vars_UE_g[Mod_id][CC_id]->ncs_cell);
     init_ul_hopping(fp);
     // RNTI
-    PHY_vars_UE_g[Mod_id][CC_id]->pdcch_vars[0][eNB_id]->crnti = mobilityControlInfo->newUE_Identity.buf[0]|(mobilityControlInfo->newUE_Identity.buf[1]<<8);
-    PHY_vars_UE_g[Mod_id][CC_id]->pdcch_vars[1][eNB_id]->crnti = mobilityControlInfo->newUE_Identity.buf[0]|(mobilityControlInfo->newUE_Identity.buf[1]<<8);
-    LOG_I(PHY,"SET C-RNTI %x %x\n",PHY_vars_UE_g[Mod_id][CC_id]->pdcch_vars[0][eNB_id]->crnti,
-          PHY_vars_UE_g[Mod_id][CC_id]->pdcch_vars[1][eNB_id]->crnti);
+    const rnti_t crnti = (mobilityControlInfo->newUE_Identity.buf[0] << 8) | mobilityControlInfo->newUE_Identity.buf[1];
+    for (int th = 0; th < RX_NB_TH_MAX; th++)
+      PHY_vars_UE_g[Mod_id][CC_id]->pdcch_vars[th][eNB_id]->crnti = crnti;
+    LOG_I(PHY, "SET C-RNTI %x\n", crnti);
+    // access the target cell (36.331 5.3.5.4: MAC reset, random access)
+    PHY_VARS_UE *ue = PHY_vars_UE_g[Mod_id][CC_id];
+    ue->UE_mode[eNB_id] = PRACH;
+    ue->ulsch_Msg3_active[eNB_id] = 0;
+    for (int h = 0; h < 8; h++) {
+      LTE_UL_UE_HARQ_t *ul = ue->ulsch[eNB_id]->harq_processes[h];
+      if (ul) {
+        ul->first_tx = 1;
+        ul->status = SCH_IDLE;
+        ul->subframe_scheduling_flag = 0;
+        ul->round = 0;
+      }
+      for (int th = 0; th < RX_NB_TH_MAX; th++)
+        for (int cw = 0; cw < 2; cw++) {
+          LTE_UE_DLSCH_t *dlsch = ue->dlsch[th][eNB_id][cw];
+          if (dlsch && dlsch->harq_processes[h]) {
+            dlsch->harq_processes[h]->first_tx = 1;
+            dlsch->harq_processes[h]->round = 0;
+          }
+        }
+    }
   }
 
   if(ho_failed) {

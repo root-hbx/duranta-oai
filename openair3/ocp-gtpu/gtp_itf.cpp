@@ -922,8 +922,9 @@ int gtpv1u_create_x2u_tunnel(const instance_t instanceP,
 {
   UNUSED(instanceP);
   UNUSED(create_tunnel_req_pP);
-  UNUSED(create_tunnel_resp_pP);
-  AssertFatal(false, "to be developped\n");
+  // X2-U data forwarding is not supported: the E-RABs are admitted without forwarding tunnels
+  create_tunnel_resp_pP->num_tunnels = 0;
+  return 0;
 }
 
 int newGtpuDeleteOneTunnel(instance_t instance, ue_id_t ue_id, int rb_id)

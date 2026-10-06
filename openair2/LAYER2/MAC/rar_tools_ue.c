@@ -105,12 +105,16 @@ uint16_t ue_process_rar(const module_id_t module_idP, const int CC_id, const fra
   trace_pdu(&tmp);
 
   if (preamble_index == rarh->RAPID) {
-    *t_crnti = (uint16_t) rar[5] + (rar[4] << 8); //rar->t_crnti;
-    UE_mac_inst[module_idP].crnti = *t_crnti; //rar->t_crnti;
+    // with a C-RNTI in Msg3 the TC-RNTI only scrambles Msg3
+    if (UE_mac_inst[module_idP].RA_crnti)
+      *t_crnti = UE_mac_inst[module_idP].crnti;
+    else
+      *t_crnti = UE_mac_inst[module_idP].crnti = (uint16_t)rar[5] + (rar[4] << 8);
     //return(rar->Timing_Advance_Command);
     ret = ((((uint16_t) (rar[0] & 0x7f)) << 4) + (rar[1] >> 4));
   } else {
-    UE_mac_inst[module_idP].crnti = 0;
+    if (!UE_mac_inst[module_idP].RA_crnti)
+      UE_mac_inst[module_idP].crnti = 0;
     ret = (0xffff);
   }
 

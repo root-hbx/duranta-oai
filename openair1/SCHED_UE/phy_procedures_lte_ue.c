@@ -49,6 +49,7 @@ static const char mode_string[4][20] = {"NOT SYNCHED","PRACH","RAR","PUSCH"};
 
 void Msg1_transmitted(module_id_t module_idP, uint8_t CC_id, frame_t frameP, uint8_t eNB_id);
 void Msg3_transmitted(module_id_t module_idP, uint8_t CC_id, frame_t frameP, uint8_t eNB_id);
+bool ue_ra_crnti_resolved(module_id_t module_idP, uint8_t eNB_index);
 
 extern uint64_t downlink_frequency[MAX_NUM_CCs][4];
 
@@ -1335,7 +1336,7 @@ void ue_ulsch_uespec_procedures(PHY_VARS_UE *ue,
         ue->ulsch[eNB_id]->harq_processes[harq_pid]->subframe_scheduling_flag);
 
   if (ue->mac_enabled == 1) {
-    if ((ue->ulsch_Msg3_active[eNB_id] == 1) && (ue->ulsch_Msg3_frame[eNB_id] == frame_tx)
+    if ((ue->ulsch_Msg3_active[eNB_id] == 1) && ((ue->ulsch_Msg3_frame[eNB_id] & 1023) == (frame_tx & 1023))
         && (ue->ulsch_Msg3_subframe[eNB_id] == (subframe_tx % 1024))) { // Initial Transmission of Msg3
       ue->ulsch[eNB_id]->harq_processes[harq_pid]->subframe_scheduling_flag = 1;
 
@@ -1443,6 +1444,12 @@ void ue_ulsch_uespec_procedures(PHY_VARS_UE *ue,
                   (is_cqi_TXOp(ue,proc,eNB_id)==1));
     ri_status = ((ue->cqi_report_config[eNB_id].CQI_ReportPeriodic.ri_ConfigIndex>0) &&
                  (is_ri_TXOp(ue,proc,eNB_id)==1));
+
+    // no UCI on Msg3, e.g. a connected UE's random access at handover
+    if (Msg3_flag) {
+      cqi_status = ri_status = 0;
+      ack_status_cw0 = ack_status_cw1 = 0;
+    }
     // compute CQI/RI resources
     compute_cqi_ri_resources(ue, ue->ulsch[eNB_id], eNB_id, ue->ulsch[eNB_id]->rnti, P_RNTI, CBA_RNTI, cqi_status, ri_status);
 
@@ -2684,6 +2691,9 @@ int ue_pdcch_procedures(uint8_t eNB_id,
 
       ue->ulsch_no_allocation_counter[eNB_id] = 0;
       //dump_dci(&ue->frame_parms,&dci_alloc_rx[i]);
+
+      if (ue->mac_enabled && ue_ra_crnti_resolved(ue->Mod_id, eNB_id))
+        ra_succeeded(ue->Mod_id, ue->CC_id, eNB_id);
 
       if ((ue->UE_mode[eNB_id] > PRACH) &&
           (generate_ue_ulsch_params_from_dci((void *)&dci_alloc_rx[i].dci_pdu,

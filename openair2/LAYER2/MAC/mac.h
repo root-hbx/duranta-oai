@@ -1557,6 +1557,8 @@ typedef struct {
   uint8_t RA_contention_resolution_timer_active;
   /// Random-access Contention Resolution Timer count value
   uint8_t RA_contention_resolution_cnt;
+  /// Msg3 carries the C-RNTI MAC CE (connected mode)
+  bool RA_crnti;
   /// power headroom reporitng reconfigured
   uint8_t PHR_reconfigured;
   /// power headroom state as configured by the higher layers

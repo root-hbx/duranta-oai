@@ -745,6 +745,14 @@ rrc_ue_establish_drb(
 }
 
 
+/* 36.331 5.5.3.2: a = 1/2^(k/4), k from the FilterCoefficient enumerated value */
+static float l3_filter_coeff(long fc)
+{
+  static const uint8_t k[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 17, 19};
+  DevAssert(fc >= 0 && fc < sizeofArray(k));
+  return 1. / pow(2, k[fc] / 4.);
+}
+
 //-----------------------------------------------------------------------------
 void
 rrc_ue_process_measConfig(
@@ -853,19 +861,6 @@ rrc_ue_process_measConfig(
     }
   }
 
-  if (measConfig->quantityConfig != NULL) {
-    if (ue->QuantityConfig[eNB_index]) {
-      LOG_D(RRC,"Modifying Quantity Configuration \n");
-      memcpy((char *)ue->QuantityConfig[eNB_index],
-             (char *)measConfig->quantityConfig,
-             sizeof(LTE_QuantityConfig_t));
-    } else {
-      LOG_D(RRC,"Adding Quantity configuration\n");
-      ue->QuantityConfig[eNB_index] = measConfig->quantityConfig;
-    }
-    measConfig->quantityConfig = NULL;
-  }
-
   if (measConfig->measIdToRemoveList != NULL) {
     for (i=0; i<measConfig->measIdToRemoveList->list.count; i++) {
       ind   = *measConfig->measIdToRemoveList->list.array[i];
@@ -915,10 +910,8 @@ rrc_ue_process_measConfig(
     }
     measConfig->quantityConfig = NULL;
 
-    ue->filter_coeff_rsrp = 1./pow(2,
-        (*ue->QuantityConfig[eNB_index]->quantityConfigEUTRA->filterCoefficientRSRP)/4);
-    ue->filter_coeff_rsrq = 1./pow(2,
-        (*ue->QuantityConfig[eNB_index]->quantityConfigEUTRA->filterCoefficientRSRQ)/4);
+    ue->filter_coeff_rsrp = l3_filter_coeff(*ue->QuantityConfig[eNB_index]->quantityConfigEUTRA->filterCoefficientRSRP);
+    ue->filter_coeff_rsrq = l3_filter_coeff(*ue->QuantityConfig[eNB_index]->quantityConfigEUTRA->filterCoefficientRSRQ);
     LOG_I(RRC,"[UE %d] set rsrp-coeff for eNB %d: %ld rsrq-coeff: %ld rsrp_factor: %f rsrq_factor: %f \n",
           ctxt_pP->module_id, eNB_index, // UE_rrc_inst[ue_mod_idP].Info[eNB_index].UE_index,
           *ue->QuantityConfig[eNB_index]->quantityConfigEUTRA->filterCoefficientRSRP,
@@ -1793,94 +1786,78 @@ static void rrc_ue_process_rrcConnectionReconfiguration(const protocol_ctxt_t *c
         }
         LOG_D(RRC, "Sent NAS_CONN_ESTABLI_CNF to NAS layer via itti!\n");
 
-        free (r_r8->dedicatedInfoNASList);
+        // the NAS PDU buffers now belong to NAS; the message is freed later with the next one
+        free(r_r8->dedicatedInfoNASList);
+        r_r8->dedicatedInfoNASList = NULL;
       }
 
     } // c1 present
   } // critical extensions present
 }
 
-/* 36.331, 5.3.5.4      Reception of an RRCConnectionReconfiguration including the mobilityControlInfo by the UE (handover) */
+/* 36.331, 5.3.5.4      Reception of an RRCConnectionReconfiguration including the mobilityControlInfo by the UE (handover)
+ * Intra-frequency handover: RLC/PDCP entities are keyed by C-RNTI, so the source entities are removed and SRB1/SRB2
+ * and the DRBs are re-established under the new C-RNTI with keys from KeNB*, as the target eNB does. */
 //-----------------------------------------------------------------------------
-void
-rrc_ue_process_mobilityControlInfo(
-  const protocol_ctxt_t *const       ctxt_pP,
-  const uint8_t                      eNB_index,
-  struct LTE_MobilityControlInfo *const mobilityControlInfo
-)
+void rrc_ue_process_mobilityControlInfo(const protocol_ctxt_t *const ctxt_pP,
+                                        const uint8_t eNB_index,
+                                        struct LTE_MobilityControlInfo *const mobilityControlInfo)
 //-----------------------------------------------------------------------------
 {
-  /*
-  DRB_ToReleaseList_t*  drb2release_list;
-  DRB_Identity_t *lcid;
-   */
-  LOG_I(RRC,"Note: This function needs some updates\n");
+  UE_RRC_INST *ue = &UE_rrc_inst[ctxt_pP->module_id];
+  LOG_I(RRC, "[UE %d] Frame %d: handover to PCI %ld\n", ctxt_pP->module_id, ctxt_pP->frame, mobilityControlInfo->targetPhysCellId);
+  ue->Info[eNB_index].T310_active = 0;
+  ue->Info[eNB_index].T304_active = 1;
+  ue->Info[eNB_index].T304_cnt = T304[mobilityControlInfo->t304];
 
-  if(UE_rrc_inst[ctxt_pP->module_id].Info[eNB_index].T310_active == 1) {
-    UE_rrc_inst[ctxt_pP->module_id].Info[eNB_index].T310_active = 0;
+  // KeNB* (33.401 A.5), horizontal derivation from the target PCI and EARFCN-DL
+  if (mobilityControlInfo->carrierFreq) {
+    uint8_t kenb_star[32];
+    derive_keNB_star(ue->kenb, mobilityControlInfo->targetPhysCellId, mobilityControlInfo->carrierFreq->dl_CarrierFreq, true, kenb_star);
+    memcpy(ue->kenb, kenb_star, sizeof(kenb_star));
+  } else {
+    LOG_E(RRC, "[UE %d] handover without carrierFreq: KeNB* not derived\n", ctxt_pP->module_id);
   }
 
-  UE_rrc_inst[ctxt_pP->module_id].Info[eNB_index].T304_active = 1;
-  UE_rrc_inst[ctxt_pP->module_id].Info[eNB_index].T304_cnt = T304[mobilityControlInfo->t304];
-  /*
-  drb2release_list = CALLOC (1, sizeof (*drb2release_list));
-  lcid= CALLOC (1, sizeof (DRB_Identity_t)); // long
-  for (*lcid=0;*lcid<NB_RB_MAX;*lcid++)
-  {
-    asn1cSeqAdd (&(drb2release_list)->list,lcid);
+  rrc_rlc_remove_ue(ctxt_pP);
+  pdcp_remove_UE(ctxt_pP);
+
+  // target cell MAC/PHY configuration, new C-RNTI
+  rrc_mac_config_req_ue(ctxt_pP->module_id, 0, eNB_index, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, NULL, mobilityControlInfo,
+                        NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
+
+  protocol_ctxt_t ctxt = *ctxt_pP;
+  ctxt.rntiMaybeUEid = UE_mac_inst[ctxt_pP->module_id].crnti;
+  LTE_SRB_ToAddModList_t srbs = {0};
+  asn1cSeqAdd(&srbs.list, ue->SRB1_config[eNB_index]);
+  if (ue->SRB2_config[eNB_index])
+    asn1cSeqAdd(&srbs.list, ue->SRB2_config[eNB_index]);
+  LTE_DRB_ToAddModList_t drbs = {0};
+  for (int i = 0; i < sizeofArray(ue->DRB_config[eNB_index]); i++)
+    if (ue->DRB_config[eNB_index][i])
+      asn1cSeqAdd(&drbs.list, ue->DRB_config[eNB_index][i]);
+  uint8_t kRRCenc[32] = {0};
+  uint8_t kRRCint[32] = {0};
+  uint8_t kUPenc[32] = {0};
+  derive_key_nas(RRC_ENC_ALG, ue->ciphering_algorithm, ue->kenb, kRRCenc);
+  derive_key_nas(RRC_INT_ALG, ue->integrity_algorithm, ue->kenb, kRRCint);
+  derive_key_nas(UP_ENC_ALG, ue->ciphering_algorithm, ue->kenb, kUPenc);
+  LTE_DRB_ToAddModList_t *drb_list = drbs.list.count ? &drbs : NULL;
+  rrc_pdcp_config_asn1_req(&ctxt, &srbs, drb_list, NULL, ue->ciphering_algorithm | (ue->integrity_algorithm << 4), kRRCenc,
+                           kRRCint, kUPenc, NULL, ue->defaultDRB);
+  rrc_rlc_config_asn1_req(&ctxt, &srbs, drb_list, NULL, NULL, 0, 0);
+  free(srbs.list.array);
+  free(drbs.list.array);
+
+  // the target becomes the serving cell: swap the L3-filtered results and restart event evaluation
+  const int target = ue->Info[0].handoverTarget;
+  if (target > 0) {
+    const float rsrp = ue->rsrp_db_filtered[0];
+    ue->rsrp_db_filtered[0] = ue->rsrp_db_filtered[target];
+    ue->rsrp_db_filtered[target] = rsrp;
   }
-   */
-  //Removing SRB1 and SRB2 and DRB0
-  LOG_I(RRC,"[UE %d] : Update needed for rrc_pdcp_config_req (deprecated) and rrc_rlc_config_req commands(deprecated)\n", ctxt_pP->module_id);
-  rrc_pdcp_config_req (ctxt_pP, SRB_FLAG_YES, CONFIG_ACTION_REMOVE, DCCH,UNDEF_SECURITY_MODE);
-  rrc_rlc_config_req(ctxt_pP, SRB_FLAG_YES, MBMS_FLAG_NO, CONFIG_ACTION_REMOVE,ctxt_pP->module_id+DCCH);
-  rrc_pdcp_config_req (ctxt_pP, SRB_FLAG_YES, CONFIG_ACTION_REMOVE, DCCH1,UNDEF_SECURITY_MODE);
-  rrc_rlc_config_req(ctxt_pP, SRB_FLAG_YES,CONFIG_ACTION_REMOVE, MBMS_FLAG_NO,ctxt_pP->module_id+DCCH1);
-  rrc_pdcp_config_req (ctxt_pP, SRB_FLAG_NO, CONFIG_ACTION_REMOVE, DTCH,UNDEF_SECURITY_MODE);
-  rrc_rlc_config_req(ctxt_pP, SRB_FLAG_NO,CONFIG_ACTION_REMOVE, MBMS_FLAG_NO,ctxt_pP->module_id+DTCH);
-  //Synchronisation to DL of target cell
-  LOG_I(RRC,
-        "HO: Reset PDCP and RLC for configured RBs.. \n[FRAME %05d][RRC_UE][MOD %02d][][--- MAC_CONFIG_REQ  (SRB2 eNB %d) --->][MAC_UE][MOD %02d][]\n",
-        ctxt_pP->frame, ctxt_pP->module_id, eNB_index, ctxt_pP->module_id);
-  // Reset MAC and configure PHY
-  rrc_mac_config_req_ue(ctxt_pP->module_id,
-                        0,
-                        eNB_index,
-                        (LTE_RadioResourceConfigCommonSIB_t *)NULL,
-                        (struct LTE_PhysicalConfigDedicated *)NULL,
-                        (LTE_SCellToAddMod_r10_t *)NULL,
-                        (LTE_MeasObjectToAddMod_t **)NULL,
-                        (LTE_MAC_MainConfig_t *)NULL,
-                        0,
-                        (struct LTE_LogicalChannelConfig *)NULL,
-                        (LTE_MeasGapConfig_t *)NULL,
-                        (LTE_TDD_Config_t *)NULL,
-                        mobilityControlInfo,
-                        (uint8_t *)NULL,
-                        (uint16_t *)NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        NULL,
-                        0,
-                        (LTE_MBSFN_AreaInfoList_r9_t *)NULL,
-                        (LTE_PMCH_InfoList_r9_t *)NULL,
-                        0,
-                        NULL,
-                        NULL,
-                        0,
-                        (struct LTE_NonMBSFN_SubframeConfig_r14 *)NULL,
-                        (LTE_MBSFN_AreaInfoList_r9_t *)NULL
-                       );
-  // Re-establish PDCP for all RBs that are established
-  // rrc_pdcp_config_req (ue_mod_idP+NB_eNB_INST, frameP, 0, CONFIG_ACTION_ADD, ue_mod_idP+DCCH);
-  // rrc_pdcp_config_req (ue_mod_idP+NB_eNB_INST, frameP, 0, CONFIG_ACTION_ADD, ue_mod_idP+DCCH1);
-  // rrc_pdcp_config_req (ue_mod_idP+NB_eNB_INST, frameP, 0, CONFIG_ACTION_ADD, ue_mod_idP+DTCH);
-  // Re-establish RLC for all RBs that are established
-  // rrc_rlc_config_req(ue_mod_idP+NB_eNB_INST,frameP,0,CONFIG_ACTION_ADD,ue_mod_idP+DCCH,SIGNALLING_RADIO_BEARER);
-  // rrc_rlc_config_req(ue_mod_idP+NB_eNB_INST,frameP,0,CONFIG_ACTION_ADD,ue_mod_idP+DCCH1,SIGNALLING_RADIO_BEARER);
-  // rrc_rlc_config_req(ue_mod_idP+NB_eNB_INST,frameP,0,CONFIG_ACTION_ADD,ue_mod_idP+DTCH,RADIO_ACCESS_BEARER);
-  UE_rrc_inst[ctxt_pP->module_id].Info[eNB_index].State = RRC_SI_RECEIVED;
+  ue->Info[0].handoverTarget = 0;
+  memset(ue->measTimer, 0, sizeof(ue->measTimer));
 }
 
 //-----------------------------------------------------------------------------
@@ -1912,7 +1889,6 @@ static void rrc_ue_decode_dcch(const protocol_ctxt_t *const ctxt_pP,
   LTE_DL_DCCH_Message_t *dl_dcch_msg=NULL;//&dldcchmsg;
   //  asn_dec_rval_t dec_rval;
   // int i;
-  uint8_t target_eNB_index=0xFF;
   MessageDef *msg_p;
 
   if (Srb_id != 1) {
@@ -1980,63 +1956,18 @@ static void rrc_ue_decode_dcch(const protocol_ctxt_t *const ctxt_pP,
         case LTE_DL_DCCH_MessageType__c1_PR_mobilityFromEUTRACommand:
           break;
 
-        case LTE_DL_DCCH_MessageType__c1_PR_rrcConnectionReconfiguration:
-
-          // first check if mobilityControlInfo  is present
-          if (dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration.criticalExtensions.choice.c1.choice.rrcConnectionReconfiguration_r8.mobilityControlInfo
-              != NULL) {
-            /* 36.331, 5.3.5.4 Reception of an RRCConnectionReconfiguration including the mobilityControlInfo by the UE (handover)*/
-            if (UE_rrc_inst[ctxt_pP->module_id].HandoverInfoUe.targetCellId
-                != dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration.criticalExtensions.choice.c1.choice.rrcConnectionReconfiguration_r8.mobilityControlInfo->targetPhysCellId) {
-              LOG_W(RRC,
-                    "[UE %d] Frame %d: Handover target (%ld) is different from RSRP measured target (%ld)..\n",
-                    ctxt_pP->module_id,
-                    ctxt_pP->frame,
-                    dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration.criticalExtensions.choice.c1.choice.rrcConnectionReconfiguration_r8.mobilityControlInfo->targetPhysCellId,
-                    UE_rrc_inst[ctxt_pP->module_id].HandoverInfoUe.targetCellId);
-              return;
-            } else if ((target_eNB_index = get_adjacent_cell_mod_id(UE_rrc_inst[ctxt_pP->module_id].HandoverInfoUe.targetCellId))
-                       == 0xFF) {
-              LOG_W(RRC,
-                    "[UE %d] Frame %d: ue_mod_idP of the target eNB not found, check the network topology\n",
-                    ctxt_pP->module_id,
-                    ctxt_pP->frame);
-              return;
-            } else {
-              LOG_I(RRC,
-                    "[UE% d] Frame %d: Received rrcConnectionReconfiguration with mobilityControlInfo \n",
-                    ctxt_pP->module_id,
-                    ctxt_pP->frame);
-              UE_rrc_inst[ctxt_pP->module_id].HandoverInfoUe.measFlag = 1; // Ready to send more MeasReports if required
-            }
-          }
-
-          rrc_ue_process_rrcConnectionReconfiguration(
-            ctxt_pP,
-            &dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration,
-            eNB_indexP);
-
-          if (target_eNB_index != 0xFF) {
-            rrc_ue_generate_RRCConnectionReconfigurationComplete(
-              ctxt_pP,
-              target_eNB_index,
-              dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration.rrc_TransactionIdentifier,
-              NULL);
-            UE_rrc_inst[ctxt_pP->module_id].Info[eNB_indexP].State = RRC_HO_EXECUTION;
-            UE_rrc_inst[ctxt_pP->module_id].Info[target_eNB_index].State = RRC_RECONFIGURED;
-            LOG_I(RRC, "[UE %d] State = RRC_RECONFIGURED during HO (eNB %d)\n",
-                  ctxt_pP->module_id, target_eNB_index);
-          } else {
-            rrc_ue_generate_RRCConnectionReconfigurationComplete(
-              ctxt_pP,
-              eNB_indexP,
-              dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration.rrc_TransactionIdentifier,
-              NULL);
-            UE_rrc_inst[ctxt_pP->module_id].Info[eNB_indexP].State = RRC_RECONFIGURED;
-            LOG_I(RRC, "[UE %d] State = RRC_RECONFIGURED (eNB %d)\n",
-                  ctxt_pP->module_id,
-                  eNB_indexP);
-          }
+        case LTE_DL_DCCH_MessageType__c1_PR_rrcConnectionReconfiguration: {
+          LTE_RRCConnectionReconfiguration_t *reconf = &dl_dcch_msg->message.choice.c1.choice.rrcConnectionReconfiguration;
+          const bool ho = reconf->criticalExtensions.choice.c1.choice.rrcConnectionReconfiguration_r8.mobilityControlInfo != NULL;
+          rrc_ue_process_rrcConnectionReconfiguration(ctxt_pP, reconf, eNB_indexP);
+          // after a handover, SRB1 lives under the new C-RNTI
+          protocol_ctxt_t ctxt = *ctxt_pP;
+          if (ho)
+            ctxt.rntiMaybeUEid = UE_mac_inst[ctxt_pP->module_id].crnti;
+          rrc_ue_generate_RRCConnectionReconfigurationComplete(&ctxt, eNB_indexP, reconf->rrc_TransactionIdentifier, NULL);
+          UE_rrc_inst[ctxt_pP->module_id].Info[eNB_indexP].State = RRC_RECONFIGURED;
+          LOG_I(RRC, "[UE %d] State = RRC_RECONFIGURED (eNB %d)%s\n", ctxt_pP->module_id, eNB_indexP, ho ? " after handover" : "");
+        }
 
           //TTN test D2D (should not be here - in reality, this message will be triggered from ProSeApp)
           if (send_ue_information == 0) {
@@ -3889,8 +3820,8 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
   LTE_TimeToTrigger_t  ttt_ms;
   LTE_Q_OffsetRange_t  ofn;
   LTE_Q_OffsetRange_t  ocn;
-  LTE_Q_OffsetRange_t  ofs = 0;
-  LTE_Q_OffsetRange_t  ocs = 0;
+  LTE_Q_OffsetRange_t  ofs = LTE_Q_OffsetRange_dB0;
+  LTE_Q_OffsetRange_t  ocs = LTE_Q_OffsetRange_dB0;
   long             a3_offset;
   LTE_MeasObjectId_t   measObjId;
   LTE_ReportConfigId_t reportConfigId;
@@ -3914,11 +3845,10 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
               hys = ue->ReportConfig[i][reportConfigId-1]->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.hysteresis;
               ttt_ms = timeToTrigger_ms[ue->ReportConfig[i][reportConfigId
                                         -1]->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.timeToTrigger];
-              // Freq specific offset of neighbor cell freq
-              ofn = 5;//((ue->MeasObj[i][measObjId-1]->measObject.choice.measObjectEUTRA.offsetFreq != NULL) ?
-              // *ue->MeasObj[i][measObjId-1]->measObject.choice.measObjectEUTRA.offsetFreq : 15); //  /* 15 is the Default */
-              // cellIndividualOffset of neighbor cell - not defined yet
-              ocn = 0;
+              // Freq specific offset of neighbor cell freq; cellIndividualOffset not handled
+              const long *offsetFreq = ue->MeasObj[i][measObjId - 1]->measObject.choice.measObjectEUTRA.offsetFreq;
+              ofn = offsetFreq ? *offsetFreq : LTE_Q_OffsetRange_dB0;
+              ocn = LTE_Q_OffsetRange_dB0;
               a3_offset = ue->ReportConfig[i][reportConfigId-1]->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.eventA3.a3_Offset;
 
               switch (ue->ReportConfig[i][reportConfigId-1]->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.present) {
@@ -3990,6 +3920,16 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
 //check_trigger_meas_event(ue_mod_idP, frameP, eNB_index, i,j,ofn,ocn,hys,ofs,ocs,a3_offset,ttt_ms)
 //-----------------------------------------------------------------------------
 
+/* 36.331 Q-OffsetRange enumerated value to dB */
+static int q_offset_db(LTE_Q_OffsetRange_t q)
+{
+  static const int8_t db[] = {-24, -22, -20, -18, -16, -14, -12, -10, -8, -6, -5, -4, -3, -2, -1, 0,
+                              1,   2,   3,   4,   5,   6,   8,   10,  12, 14, 16, 18, 20, 22, 24};
+  DevAssert(q >= 0 && q < sizeofArray(db));
+  return db[q];
+}
+
+/* Event A3 entering condition, 36.331 5.5.4.4: Mn + Ofn + Ocn - Hys > Mp + Ofp + Ocp + Off (Hys and Off in 0.5 dB) */
 uint8_t check_trigger_meas_event(
   module_id_t     ue_mod_idP,
   frame_t         frameP,
@@ -4003,50 +3943,24 @@ uint8_t check_trigger_meas_event(
   LTE_Q_OffsetRange_t ocs,
   long            a3_offset,
   LTE_TimeToTrigger_t ttt ) {
-  uint8_t eNB_offset;
-  //  uint8_t currentCellIndex = frame_parms->Nid_cell;
-  uint8_t tmp_offset;
-  LOG_D(RRC,"[UE %d] ofn(%ld) ocn(%ld) hys(%ld) ofs(%ld) ocs(%ld) ttt(%ld) rssi %3.1f\n",
-        ue_mod_idP,
-        ofn,ocn,hys,ofs,ocs,ttt,
-        10*log10(get_RSSI(ue_mod_idP,0))-get_rx_total_gain_dB(ue_mod_idP,0));
-  LOG_D(RRC, "[UE %d] Frame %d: num_adj: %d eNB_idx: %d, NB_eNB_INST: %d\n",
-        ue_mod_idP, frameP, get_n_adj_cells(ue_mod_idP,0), eNB_index, NB_eNB_INST);
+  UE_RRC_INST *ue = &UE_rrc_inst[ue_mod_idP];
+  const float mp = ue->rsrp_db_filtered[eNB_index] + q_offset_db(ofs) + q_offset_db(ocs) + a3_offset / 2.0;
 
-  for (eNB_offset = 0; eNB_offset<1+get_n_adj_cells(ue_mod_idP,0); eNB_offset++) {
-    /* RHS: Verify that idx 0 corresponds to currentCellIndex in rsrp array */
-    if((eNB_offset!=eNB_index)&&(eNB_offset<NB_eNB_INST)) {
-      if(eNB_offset<eNB_index) {
-        tmp_offset = eNB_offset;
-      } else {
-        tmp_offset = eNB_offset-1;
-      }
+  for (int eNB_offset = 0; eNB_offset < 1 + get_n_adj_cells(ue_mod_idP, 0); eNB_offset++) {
+    if (eNB_offset == eNB_index)
+      continue;
+    const int tmp_offset = eNB_offset < eNB_index ? eNB_offset : eNB_offset - 1;
+    const float mn = ue->rsrp_db_filtered[eNB_offset] + q_offset_db(ofn) + q_offset_db(ocn) - hys / 2.0;
+    uint32_t *timer = &ue->measTimer[ue_cnx_index][meas_index][tmp_offset];
+    *timer = mn > mp ? *timer + 1 : 0; // called once per 1 ms subframe
+    LOG_D(RRC, "[UE %d] Frame %d: A3 neighbour %d Mn %.1f Mp %.1f timer %u/%ld\n", ue_mod_idP, frameP, eNB_offset, mn, mp, *timer, ttt);
 
-      if(UE_rrc_inst[ue_mod_idP].rsrp_db_filtered[eNB_offset]+ofn+ocn-hys > UE_rrc_inst[ue_mod_idP].rsrp_db_filtered[eNB_index]+ofs+ocs-1/*+a3_offset*/) {
-        UE_rrc_inst->measTimer[ue_cnx_index][meas_index][tmp_offset] += 2; //Called every subframe = 2ms
-        LOG_D(RRC,"[UE %d] Frame %d: Entry measTimer[%d][%d][%d]: %d currentCell: %d betterCell: %d \n",
-              ue_mod_idP, frameP, ue_cnx_index,meas_index,tmp_offset,UE_rrc_inst->measTimer[ue_cnx_index][meas_index][tmp_offset],0,eNB_offset);
-      } else {
-        UE_rrc_inst->measTimer[ue_cnx_index][meas_index][tmp_offset] = 0; //Exit condition: Resetting the measurement timer
-        LOG_D(RRC,"[UE %d] Frame %d: Exit measTimer[%d][%d][%d]: %d currentCell: %d betterCell: %d \n",
-              ue_mod_idP, frameP, ue_cnx_index,meas_index,tmp_offset,UE_rrc_inst->measTimer[ue_cnx_index][meas_index][tmp_offset],0,eNB_offset);
-      }
-
-      if (UE_rrc_inst->measTimer[ue_cnx_index][meas_index][tmp_offset] >= ttt) {
-        UE_rrc_inst->HandoverInfoUe.targetCellId = get_adjacent_cell_id(ue_mod_idP,tmp_offset); //WARNING!!!...check this!
-        LOG_D(RRC,"[UE %d] Frame %d eNB %d: Handover triggered: targetCellId: %ld currentCellId: %d eNB_offset: %d rsrp source: %3.1f rsrp target: %3.1f\n",
-              ue_mod_idP, frameP, eNB_index,
-              UE_rrc_inst->HandoverInfoUe.targetCellId,ue_cnx_index,eNB_offset,
-              get_RSRP(ue_mod_idP,0,0),
-              get_RSRP(ue_mod_idP,0,1));
-        UE_rrc_inst->Info[0].handoverTarget = eNB_offset;
-        //LOG_D(RRC,"PHY_ID: %d \n",UE_rrc_inst->HandoverInfoUe.targetCellId);
-        return 1;
-      }
-
-      // else{
-      //  LOG_D(RRC,"Condition does not hold\n");
-      // }
+    if (*timer >= ttt) {
+      ue->HandoverInfoUe.targetCellId = get_adj_cell_id(ue_mod_idP, 0, tmp_offset);
+      ue->Info[0].handoverTarget = eNB_offset;
+      LOG_D(RRC, "[UE %d] Frame %d: A3 triggered, target PCI %ld (RSRP serving %.1f, target %.1f dBm)\n", ue_mod_idP, frameP,
+            ue->HandoverInfoUe.targetCellId, ue->rsrp_db_filtered[eNB_index], ue->rsrp_db_filtered[eNB_offset]);
+      return 1;
     }
   }
 
