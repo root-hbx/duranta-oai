@@ -57,6 +57,7 @@ There is some general information in the [OpenAirInterface Gitlab Wiki](https://
 - [How to run the UE with LDPC CUDA accelerator](./NR_SA_Tutorial_OAI_nrUE_GPU_offload.md)
 - [How to setup OAI with the XDMA FPGA LDPC accelerator](./LDPC_XDMA_offload_setup.md)
 - [How to do a handover](./handover-tutorial.md)
+- [How to do an LTE X2 handover (2 eNBs + 1 UE, rfsim)](./lte-ue-enb-handover.md)
 - [How to setup gNB frequency](./gNB_frequency_setup.md)
 - [How to use the RT data recording app](./data_recording.md)
 - [How to use packages](./packages.md)
