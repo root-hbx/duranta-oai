@@ -74,6 +74,7 @@ typedef enum { SIMU_ROLE_SERVER = 1, SIMU_ROLE_CLIENT } simuRole;
 #define RFSIMU_WAIT_TIMEOUT "wait_timeout"
 #define RFSIMU_ENABLE_BEAMS "enable_beams"
 #define RFSIMU_BEAM_GAINS "beam_gains"
+#define RFSIMU_SYNC_CLIENTS "sync_clients"
 
 #define RFSIM_CONFIG_HELP_OPTIONS                                                                  \
   " list of comma separated options to enable rf simulator functionalities. Available options: \n" \
@@ -100,6 +101,7 @@ typedef enum { SIMU_ROLE_SERVER = 1, SIMU_ROLE_CLIENT } simuRole;
   INTPARAM(RFSIMU_WAIT_TIMEOUT,         "<wait timeout if no UE connected>\n",      simOpt, NULL,                             1),                     \
   BOOLPARAM(RFSIMU_ENABLE_BEAMS,        "<enable simplified beam simulation>\n",    simBool,NULL,                             0),                     \
   STRINGPARAM(RFSIMU_BEAM_GAINS,        "<per-beam gain in dB, one value per gNB beam id>\n", simOpt, NULL,                   NULL),                  \
+  BOOLPARAM(RFSIMU_SYNC_CLIENTS,        "<server: start clients on a 1024-frame boundary (synchronous cells)>\n", simBool, NULL, 0),                 \
 };
 // clang-format on
 static void getset_currentchannels_type(char *buf, int debug, webdatadef_t *tdata, telnet_printfunc_t prnt);
@@ -153,6 +155,7 @@ typedef struct {
 typedef struct buffer_s {
   int conn_sock;
   openair0_timestamp_t lastReceivedTS;
+  openair0_timestamp_t start_ts; // first sample sent to this client
   bool headerReceived; // true once a header has been parsed, even if its timestamp was 0
   bool headerMode;
   bool trashingPacket;
@@ -203,6 +206,7 @@ typedef struct {
   void *telnetcmd_qid;
   poll_telnetcmdq_func_t poll_telnetcmdq;
   int wait_timeout;
+  int sync_clients;
   double prop_delay_ms;
   rfsim_beam_ctrl_t *beam_ctrl;
 } rfsimulator_state_t;
@@ -318,6 +322,7 @@ static buffer_t *allocCirBuf(rfsimulator_state_t *bridge, int sock)
   bridge->nb_cnx++;
   ptr->conn_sock = sock;
   ptr->lastReceivedTS = 0;
+  ptr->start_ts = 0;
   ptr->headerReceived = false;
   ptr->headerMode = true;
   ptr->trashingPacket = true;
@@ -517,6 +522,7 @@ static void rfsimulator_readconfig(rfsimulator_state_t *rfsimulator)
   rfsimulator->chan_offset = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_OFFSET)->u64ptr);
   rfsimulator->prop_delay_ms = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_PROP_DELAY)->dblptr);
   rfsimulator->wait_timeout = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_WAIT_TIMEOUT)->iptr);
+  rfsimulator->sync_clients = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_SYNC_CLIENTS)->iptr);
 
   rfsim_beam_ctrl_t *beam_ctrl = rfsimulator->beam_ctrl;
   beam_ctrl->enable_beams = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_ENABLE_BEAMS)->iptr);
@@ -916,7 +922,7 @@ static int rfsimulator_write_internal(rfsimulator_state_t *t,
   for (int i = 0; i < MAX_FD_RFSIMU; i++) {
     buffer_t *b = &t->buf[i];
 
-    if (b->conn_sock >= 0) {
+    if (b->conn_sock >= 0 && timestamp + nsamps > b->start_ts) {
       samplesBlockHeader_t header = {(uint32_t)nsamps, (uint32_t)nbAnt, (uint64_t)timestamp, 0, 0};
       fullwrite(b->conn_sock, &header, sizeof(header), t);
       AssertFatal((uint)nbAnt == tx_gains_db.size(), "rfsim requires one gain value per IQ stream\n");
@@ -1013,25 +1019,43 @@ static bool add_client(rfsimulator_state_t *t)
     mutexunlock(t->Sockmutex);
     return false;
   }
-  new_buf->lastReceivedTS = t->lastWroteTS;
+  // a client joining before the server ever transmitted (e.g. a UE server still synchronizing on void samples) starts
+  // at the server's receive time, otherwise the server read waits for client samples from timestamp 0 forever
+  openair0_timestamp_t start_ts = t->lastWroteTS ? t->lastWroteTS : t->nextRxTstamp;
+  const openair0_timestamp_t frame = (openair0_timestamp_t)(t->sample_rate / 100);
+  if (t->sync_clients) {
+    // clients take their first sample as frame 0: put it on a common 1024-frame (10.24 s) grid
+    const openair0_timestamp_t period = frame * 1024;
+    start_ts = (start_ts + period - 1) / period * period;
+  }
+  new_buf->lastReceivedTS = start_ts;
+  new_buf->start_ts = start_ts;
   char ip[INET6_ADDRSTRLEN];
   getnameinfo((struct sockaddr *)&sa, socklen, ip, sizeof(ip), NULL, 0, NI_NUMERICHOST);
   uint16_t port = ((struct sockaddr_in *)&sa)->sin_port;
   LOG_I(HW, "Client connects from %s:%d\n", ip, port);
-  samplesBlockHeader_t header = {1, (uint32_t)t->tx_num_channels, (uint64_t)t->lastWroteTS, 0, 0};
 
-  fullwrite(conn_sock, &header, sizeof(header), t);
   float gains_db[t->tx_num_channels];
   for (int i = 0; i < t->tx_num_channels; i++)
     gains_db[i] = 0.0f;
-  fullwrite(conn_sock, gains_db, sizeof(gains_db), t);
-
   c16_t v[t->tx_num_channels];
   memset(v, 0, sizeof(v));
-  fullwrite(conn_sock, v, sizeof(v), t);
+  auto send_void_sample = [&](openair0_timestamp_t ts) {
+    samplesBlockHeader_t header = {1, (uint32_t)t->tx_num_channels, (uint64_t)ts, 0, 0};
+    fullwrite(conn_sock, &header, sizeof(header), t);
+    fullwrite(conn_sock, gains_db, sizeof(gains_db), t);
+    fullwrite(conn_sock, v, sizeof(v), t);
+  };
+  send_void_sample(start_ts);
+  if (t->sync_clients) {
+    // a client starting in the future must not wait for server samples the server only sends once it reads the client's:
+    // let it run one frame ahead, and stop sending it older samples
+    send_void_sample(start_ts + frame);
+    new_buf->start_ts = start_ts + frame;
+  }
 
   if (new_buf->channel_model)
-    new_buf->channel_model->start_TS = t->lastWroteTS;
+    new_buf->channel_model->start_TS = start_ts;
   mutexunlock(t->Sockmutex);
   return true;
 }
