@@ -120,15 +120,16 @@ int emm_recv_attach_accept(nas_user_t *user, attach_accept_msg *msg, int *emm_ca
    */
   // supported cases:
   // typeoflist = 1 Or
-  // typeoflist = 0 and numberofelements = 1 (ie numberofelements equal to zero see 3gpp 24.301 9.9.3.33.1)
+  // typeoflist = 0 or 2 and numberofelements = 1 (ie numberofelements equal to zero see 3gpp 24.301 9.9.3.33.1),
+  // both encoded as a single PLMN + TAC
   LOG_TRACE(DEBUG,"attach accept type of list: %d, number of element: %d\n",msg->tailist.typeoflist, msg->tailist.numberofelements);
-  if (!( (msg->tailist.typeoflist == TRACKING_AREA_IDENTITY_LIST_ONE_PLMN_CONSECUTIVE_TACS) ||
-         ((msg->tailist.typeoflist == 0) && ( msg->tailist.numberofelements == 0))
-       )
-     )
+  const TrackingAreaIdentityList *tl = &msg->tailist;
+  bool single_tai = tl->numberofelements == 0
+                    && (tl->typeoflist == TRACKING_AREA_IDENTITY_LIST_ONE_PLMN_NON_CONSECUTIVE_TACS
+                        || tl->typeoflist == TRACKING_AREA_IDENTITY_LIST_MANY_PLMNS);
+  if (tl->typeoflist != TRACKING_AREA_IDENTITY_LIST_ONE_PLMN_CONSECUTIVE_TACS && !single_tai)
   {
-    /* Only list of TACs belonging to one PLMN with consecutive
-     * TAC values is supported */
+    /* Only consecutive TACs of one PLMN or a single TAI is supported */
     *emm_cause = EMM_CAUSE_IE_NOT_IMPLEMENTED;
   } else if ( (msg->presencemask & ATTACH_ACCEPT_GUTI_PRESENT) &&
               (msg->guti.guti.typeofidentity != EPS_MOBILE_IDENTITY_GUTI) ) {
