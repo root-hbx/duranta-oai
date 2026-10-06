@@ -4147,94 +4147,38 @@ uint8_t do_MBSFNAreaConfig(uint8_t Mod_id,
 }
 
 
-uint8_t do_MeasurementReport(uint8_t Mod_id, uint8_t *buffer, size_t buffer_size,
+ssize_t do_MeasurementReport(uint8_t Mod_id, uint8_t *buffer, size_t buffer_size,
                              int measid, int phy_id, long rsrp_s, long rsrq_s,
                              long rsrp_t, long rsrq_t) {
-  asn_enc_rval_t enc_rval;
-  LTE_UL_DCCH_Message_t ul_dcch_msg;
-  LTE_MeasurementReport_t  *measurementReport;
-  ul_dcch_msg.message.present                     = LTE_UL_DCCH_MessageType_PR_c1;
-  ul_dcch_msg.message.choice.c1.present           = LTE_UL_DCCH_MessageType__c1_PR_measurementReport;
-  measurementReport            = &ul_dcch_msg.message.choice.c1.choice.measurementReport;
-  measurementReport->criticalExtensions.present=LTE_MeasurementReport__criticalExtensions_PR_c1;
-  measurementReport->criticalExtensions.choice.c1.present=LTE_MeasurementReport__criticalExtensions__c1_PR_measurementReport_r8;
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.nonCriticalExtension=CALLOC(1,
-      sizeof(*measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.nonCriticalExtension));
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measId=measid;
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultPCell.rsrpResult=rsrp_s;
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultPCell.rsrqResult=rsrq_s;
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultNeighCells=CALLOC(1,
-      sizeof(*measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultNeighCells));
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultNeighCells->present=LTE_MeasResults__measResultNeighCells_PR_measResultListEUTRA;
-  LTE_MeasResultListEUTRA_t  *measResultListEUTRA2;
-  measResultListEUTRA2 = CALLOC(1,sizeof(*measResultListEUTRA2));
-  struct LTE_MeasResultEUTRA *measresulteutra2;
-  measresulteutra2 = CALLOC(1,sizeof(*measresulteutra2));
-  measresulteutra2->physCellId=phy_id;//1;
-  struct LTE_MeasResultEUTRA__cgi_Info *measresult_cgi2;
-  measresult_cgi2 = CALLOC(1,sizeof(*measresult_cgi2));
-  memset(&measresult_cgi2->cellGlobalId.plmn_Identity,0,sizeof(measresult_cgi2->cellGlobalId.plmn_Identity));
-  // measresult_cgi2->cellGlobalId.plmn_Identity.mcc=CALLOC(1,sizeof(measresult_cgi2->cellGlobalId.plmn_Identity.mcc));
-  measresult_cgi2->cellGlobalId.plmn_Identity.mcc = CALLOC(1, sizeof(*measresult_cgi2->cellGlobalId.plmn_Identity.mcc));
-  asn_set_empty(&measresult_cgi2->cellGlobalId.plmn_Identity.mcc->list);//.size=0;
-  LTE_MCC_MNC_Digit_t dummy;
-  dummy=2;
-  asn1cSeqAdd(&measresult_cgi2->cellGlobalId.plmn_Identity.mcc->list,&dummy);
-  dummy=6;
-  asn1cSeqAdd(&measresult_cgi2->cellGlobalId.plmn_Identity.mcc->list,&dummy);
-  dummy=2;
-  asn1cSeqAdd(&measresult_cgi2->cellGlobalId.plmn_Identity.mcc->list,&dummy);
-  measresult_cgi2->cellGlobalId.plmn_Identity.mnc.list.size=0;
-  measresult_cgi2->cellGlobalId.plmn_Identity.mnc.list.count=0;
-  dummy=8;
-  asn1cSeqAdd(&measresult_cgi2->cellGlobalId.plmn_Identity.mnc.list,&dummy);
-  dummy=0;
-  asn1cSeqAdd(&measresult_cgi2->cellGlobalId.plmn_Identity.mnc.list,&dummy);
-  measresult_cgi2->cellGlobalId.cellIdentity.buf=MALLOC(8);
-  measresult_cgi2->cellGlobalId.cellIdentity.buf[0]=0x01;
-  measresult_cgi2->cellGlobalId.cellIdentity.buf[1]=0x48;
-  measresult_cgi2->cellGlobalId.cellIdentity.buf[2]=0x0f;
-  measresult_cgi2->cellGlobalId.cellIdentity.buf[3]=0x03;
-  measresult_cgi2->cellGlobalId.cellIdentity.size=4;
-  measresult_cgi2->cellGlobalId.cellIdentity.bits_unused=4;
-  measresult_cgi2->trackingAreaCode.buf = MALLOC(2);
-  measresult_cgi2->trackingAreaCode.buf[0]=0x00;
-  measresult_cgi2->trackingAreaCode.buf[1]=0x10;
-  measresult_cgi2->trackingAreaCode.size=2;
-  measresult_cgi2->trackingAreaCode.bits_unused=0;
-  measresulteutra2->cgi_Info=measresult_cgi2;
-  struct LTE_MeasResultEUTRA__measResult meas2;
-  //    int rsrp_va=10;
-  meas2.rsrpResult=&(rsrp_t);
-  //&rsrp_va;
-  meas2.rsrqResult=&(rsrq_t);
-  meas2.ext1 = NULL;
-  measresulteutra2->measResult=meas2;
-  asn1cSeqAdd(&measResultListEUTRA2->list,measresulteutra2);
-  measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults.measResultNeighCells->choice.measResultListEUTRA=*(measResultListEUTRA2);
+  LTE_UL_DCCH_Message_t ul_dcch_msg = {0};
+  ul_dcch_msg.message.present = LTE_UL_DCCH_MessageType_PR_c1;
+  ul_dcch_msg.message.choice.c1.present = LTE_UL_DCCH_MessageType__c1_PR_measurementReport;
+  LTE_MeasurementReport_t *measurementReport = &ul_dcch_msg.message.choice.c1.choice.measurementReport;
+  measurementReport->criticalExtensions.present = LTE_MeasurementReport__criticalExtensions_PR_c1;
+  measurementReport->criticalExtensions.choice.c1.present = LTE_MeasurementReport__criticalExtensions__c1_PR_measurementReport_r8;
+  LTE_MeasResults_t *measResults = &measurementReport->criticalExtensions.choice.c1.choice.measurementReport_r8.measResults;
+  measResults->measId = measid;
+  measResults->measResultPCell.rsrpResult = rsrp_s;
+  measResults->measResultPCell.rsrqResult = rsrq_s;
 
-  if ( LOG_DEBUGFLAG(DEBUG_ASN1) ) {
+  struct LTE_MeasResults__measResultNeighCells neighCells = {.present = LTE_MeasResults__measResultNeighCells_PR_measResultListEUTRA};
+  struct LTE_MeasResultEUTRA neigh = {.physCellId = phy_id, .measResult.rsrpResult = &rsrp_t, .measResult.rsrqResult = &rsrq_t};
+  asn1cSeqAdd(&neighCells.choice.measResultListEUTRA.list, &neigh);
+  measResults->measResultNeighCells = &neighCells;
+
+  if (LOG_DEBUGFLAG(DEBUG_ASN1)) {
     xer_fprint(stdout, &asn_DEF_LTE_UL_DCCH_Message, (void *)&ul_dcch_msg);
   }
 
-  enc_rval = uper_encode_to_buffer(&asn_DEF_LTE_UL_DCCH_Message,
-                                   NULL,
-                                   (void *)&ul_dcch_msg,
-                                   buffer,
-                                   buffer_size);
-
-  if(enc_rval.encoded == -1) {
-    LOG_I(RRC, "[eNB AssertFatal]ASN1 message encoding failed (%s, %lu)!\n",
-          enc_rval.failed_type->name, enc_rval.encoded);
-    free(measResultListEUTRA2);
-    measResultListEUTRA2 = NULL;
+  asn_enc_rval_t enc_rval = uper_encode_to_buffer(&asn_DEF_LTE_UL_DCCH_Message, NULL, (void *)&ul_dcch_msg, buffer, buffer_size);
+  free(neighCells.choice.measResultListEUTRA.list.array);
+  if (enc_rval.encoded == -1) {
+    LOG_E(RRC, "ASN1 message encoding failed (%s)!\n", enc_rval.failed_type->name);
     return -1;
   }
-
-  free(measResultListEUTRA2);
-  measResultListEUTRA2 = NULL;
-  return((enc_rval.encoded+7)/8);
+  return (enc_rval.encoded + 7) / 8;
 }
+
 ssize_t do_nrMeasurementReport(uint8_t *buffer,
                                size_t bufsize,
                                LTE_MeasId_t measid,

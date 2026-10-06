@@ -9,6 +9,7 @@
 #include "PHY/phy_extern.h"
 #include "common/utils/LOG/log.h"
 #include "PHY/sse_intrin.h"
+#include "PHY/LTE_REFSIG/lte_refsig.h"
 
 //#define k1 1000
 #define k1 ((long long int) 1000)
@@ -74,6 +75,13 @@ uint8_t get_n_adj_cells (module_id_t Mod_id,uint8_t CC_id)
     return ue->measurements.n_adj_cells;
   else
     return 0;
+}
+
+uint16_t get_adj_cell_id(module_id_t Mod_id, uint8_t CC_id, uint8_t idx)
+{
+  PHY_VARS_UE *ue = PHY_vars_UE_g[Mod_id][CC_id];
+  DevAssert(ue && idx < ue->measurements.n_adj_cells);
+  return ue->measurements.adj_cell_id[idx];
 }
 
 uint32_t get_rx_total_gain_dB (module_id_t Mod_id,uint8_t CC_id)
@@ -158,7 +166,7 @@ void ue_rrc_measurements(PHY_VARS_UE *ue,
 {
 
   uint8_t subframe = slot>>1;
-  int aarx,rb;
+  int aarx;
   uint8_t pss_symb;
   uint8_t sss_symb;
 
@@ -322,60 +330,40 @@ void ue_rrc_measurements(PHY_VARS_UE *ue,
 
     if (abstraction_flag == 0) {
 
-      // compute RSRP using symbols 0 and 4-frame_parms->Ncp
+      // compute RSRP using symbols 0 and 4-frame_parms->Ncp from the cell's CRS (port 0): average the correlation of
+      // adjacent channel estimates h_m * conj(h_m+1), insensitive to a timing offset, while REs of other cells average out
+      const int n_crs = ue->frame_parms.N_RB_DL << 1;
+      int32_t pilot[2 * 110]; // 2 CRS per RB, up to 110 RB
 
-      for (l=0,nu=0; l<=(4-ue->frame_parms.Ncp); l+=(4-ue->frame_parms.Ncp),nu=3) {
-        k = (nu + nushift)%6;
-	//#ifdef DEBUG_MEAS_RRC
-        LOG_D(PHY,"[UE %d] Frame %d subframe %d Doing ue_rrc_measurements rsrp/rssi (Nid_cell %d, nushift %d, eNB_offset %d, k %d, l %d)\n",ue->Mod_id,ue->proc.proc_rxtx[subframe&1].frame_rx,subframe,Nid_cell,nushift,
-              eNB_offset,k,l);
-	//#endif
+      for (l = 0, nu = 0; l <= (4 - ue->frame_parms.Ncp); l += (4 - ue->frame_parms.Ncp), nu = 3) {
+        k = (nu + nushift) % 6;
+        lte_dl_cell_spec_rx(ue, eNB_offset, pilot, subframe << 1, l == 0 ? 0 : 1); // conjugated CRS, |x| = 1 in Q15
+        LOG_D(PHY, "[UE %d] Frame %d subframe %d RSRP (Nid_cell %d, nushift %d, eNB_offset %d, k %d, l %d)\n", ue->Mod_id,
+              ue->proc.proc_rxtx[subframe & 1].frame_rx, subframe, Nid_cell, nushift, eNB_offset, k, l);
 
-        for (aarx=0; aarx<ue->frame_parms.nb_antennas_rx; aarx++) {
-          rxF = (int16_t *)&ue->common_vars.common_vars_rx_data_per_thread[ue->current_thread_id[subframe]].rxdataF[aarx][(l*ue->frame_parms.ofdm_symbol_size)];
-          off  = (ue->frame_parms.first_carrier_offset+k)<<1;
+        for (aarx = 0; aarx < ue->frame_parms.nb_antennas_rx; aarx++) {
+          rxF = (int16_t *)&ue->common_vars.common_vars_rx_data_per_thread[ue->current_thread_id[subframe]]
+                    .rxdataF[aarx][(l * ue->frame_parms.ofdm_symbol_size)];
+          off = (ue->frame_parms.first_carrier_offset + k) << 1;
+          int64_t re = 0, im = 0, h_re = 0, h_im = 0;
 
-          if (l==(4-ue->frame_parms.Ncp)) {
-            for (rb=0; rb<ue->frame_parms.N_RB_DL; rb++) {
-
-              //    printf("rb %d, off %d, off2 %d\n",rb,off,off2);
-
-              ue->measurements.rsrp[eNB_offset] += (((int32_t)(rxF[off])*rxF[off])+((int32_t)(rxF[off+1])*rxF[off+1]));
-              //        printf("rb %d, off %d : %d\n",rb,off,((((int32_t)rxF[off])*rxF[off])+((int32_t)(rxF[off+1])*rxF[off+1])));
-              //              if ((ue->frame_rx&0x3ff) == 0)
-              //                printf("rb %d, off %d : %d\n",rb,off,((rxF[off]*rxF[off])+(rxF[off+1]*rxF[off+1])));
-
-
-              off+=12;
-
-              if (off>=(ue->frame_parms.ofdm_symbol_size<<1))
-                off = (1+k)<<1;
-
-              ue->measurements.rsrp[eNB_offset] += (((int32_t)(rxF[off])*rxF[off])+((int32_t)(rxF[off+1])*rxF[off+1]));
-              //    printf("rb %d, off %d : %d\n",rb,off,(((int32_t)(rxF[off])*rxF[off])+((int32_t)(rxF[off+1])*rxF[off+1])));
-              /*
-                if ((ue->frame_rx&0x3ff) == 0)
-                printf("rb %d, off %d : %d\n",rb,off,((rxF[off]*rxF[off])+(rxF[off+1]*rxF[off+1])));
-              */
-              off+=12;
-
-              if (off>=(ue->frame_parms.ofdm_symbol_size<<1))
-                off = (1+k)<<1;
-
+          for (int m = 0; m < n_crs; m++) {
+            const int16_t *x = (int16_t *)&pilot[m];
+            const int32_t hr = ((int32_t)rxF[off] * x[0] - (int32_t)rxF[off + 1] * x[1]) >> 15;
+            const int32_t hi = ((int32_t)rxF[off] * x[1] + (int32_t)rxF[off + 1] * x[0]) >> 15;
+            if (m > 0) {
+              re += (int64_t)hr * h_re + (int64_t)hi * h_im;
+              im += (int64_t)hi * h_re - (int64_t)hr * h_im;
             }
+            h_re = hr;
+            h_im = hi;
 
-            /*
-            if ((eNB_offset==0)&&(l==0)) {
-            for (i=0;i<6;i++,off2+=4)
-            ue->measurements.rssi += ((rxF[off2]*rxF[off2])+(rxF[off2+1]*rxF[off2+1]));
-            if (off2==(ue->frame_parms.ofdm_symbol_size<<2))
-            off2=4;
-            for (i=0;i<6;i++,off2+=4)
-            ue->measurements.rssi += ((rxF[off2]*rxF[off2])+(rxF[off2+1]*rxF[off2+1]));
-            }
-            */
-            //    printf("slot %d, rb %d => rsrp %d, rssi %d\n",slot,rb,ue->measurements.rsrp[eNB_offset],ue->measurements.rssi);
+            off += 12;
+            if (off >= (ue->frame_parms.ofdm_symbol_size << 1))
+              off = (1 + k) << 1;
           }
+          // |mean correlation| per CRS, scaled to the energy of n_crs REs
+          ue->measurements.rsrp[eNB_offset] += sqrt((double)re * re + (double)im * im) * n_crs / (n_crs - 1);
         }
       }
 
