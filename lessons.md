@@ -120,3 +120,10 @@ Lessons learned from running OAI tests in practice. Each entry records what was 
 - **Keep the harness configuration fixed.** One run used the default `lteue.ho.conf` (with a channel model) instead of `lteue.nochan.conf`. A3 then fired as soon as eNB2 joined, while the source link was failing (SR released), and the MeasurementReport never got through. That looked like a new regression.
 - `--log_config.phy_log_level debug` produces about 1 GB of eNB logs per minute. Stop the containers right after the event and dump the logs to files.
 - PHY code that calls a new MAC function needs a stub in `openair1/SIMULATION/LTE_PHY/dummy_functions.c`, or dlsim/ulsim fail to link.
+
+**Intermittent failures found by repeating the HO (`lte.sh`, 2026-10-06)**:
+- About 1 run in 3 handed over to PCI 11 and then lost the link: ping 100 % lost and thousands of `MeasurementReport dropped`. Before the drop fix (a7a2d58266), the same race asserted in `rrc_ue_generate_MeasurementReport`.
+- Cause: right after the HO command, before the UE sent its preamble, a RAR with another RAPID arrived. `ue_process_rar` treats a mismatch as a failed initial access and set the C-RNTI to 0. Msg3 then carried C-RNTI 0, contention resolution failed and the UE fell back to RRC_IDLE.
+- Fix: a connected UE keeps its C-RNTI in `ue_process_rar` (`rar_tools_ue.c`).
+- RRC_IDLE harness: eNB2 started with an X2 target that no longer exists (eNB1 removed) never completed S1 Setup (`3586 -> 00e020` repeated every 5 s, the MME logs no S1 traffic). The UE attached on the radio, but its Attach Request never reached the MME. Start eNB2 without an X2 target in the idle case.
+- Takeaway: one passing run is not a result. Loop the scripted scenario a few times and keep the logs of the first failure.
