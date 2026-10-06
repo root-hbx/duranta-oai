@@ -35,6 +35,7 @@ extern "C" {
 #include <common/utils/load_module_shlib.h>
 #include <openair1/SIMULATION/TOOLS/sim.h>
 #include "rfsimulator.h"
+#include "executables/softmodem-common.h"
 extern int get_currentchannels_type(const char *buf,
                                     int debug,
                                     webdatadef_t *tdata,
@@ -315,6 +316,12 @@ static void clear_old_packets(std::queue<rfsim_packet_t *> &received_packets, ui
 
 static bool flushInput(rfsimulator_state_t *t, int timeout, bool first_time);
 
+// a base station receives the uplink, whichever side is the rfsim server (the UE is the server with several gNBs)
+static bool rx_is_uplink(void)
+{
+  return IS_SOFTMODEM_GNB || IS_SOFTMODEM_ENB;
+}
+
 static buffer_t *allocCirBuf(rfsimulator_state_t *bridge, int sock)
 {
   uint64_t buff_index = bridge->next_buf++ % MAX_FD_RFSIMU;
@@ -362,7 +369,7 @@ static buffer_t *allocCirBuf(rfsimulator_state_t *bridge, int sock)
     }
 
     set_channeldesc_owner(ptr->channel_model, RFSIMU_MODULEID);
-    set_channeldesc_direction(ptr->channel_model, bridge->role == SIMU_ROLE_SERVER);
+    set_channeldesc_direction(ptr->channel_model, rx_is_uplink());
     random_channel(ptr->channel_model, false);
     LOG_I(HW, "Random channel %s in rfsimulator activated\n", modelname);
   }
@@ -642,7 +649,7 @@ static int rfsimu_setchanmod_cmd(char *buff, int debug, telnet_printfunc_t prnt,
                                                           t->chan_pathloss,
                                                           0); // noise_power
           set_channeldesc_owner(newmodel, RFSIMU_MODULEID);
-          set_channeldesc_direction(newmodel, t->role == SIMU_ROLE_SERVER);
+          set_channeldesc_direction(newmodel, rx_is_uplink());
           set_channeldesc_name(newmodel, modelname);
           random_channel(newmodel, false);
           channel_desc_t *oldmodel = b->channel_model;

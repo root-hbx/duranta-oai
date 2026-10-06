@@ -127,3 +127,26 @@ Lessons learned from running OAI tests in practice. Each entry records what was 
 - Fix: a connected UE keeps its C-RNTI in `ue_process_rar` (`rar_tools_ue.c`).
 - RRC_IDLE harness: eNB2 started with an X2 target that no longer exists (eNB1 removed) never completed S1 Setup (`3586 -> 00e020` repeated every 5 s, the MME logs no S1 traffic). The UE attached on the radio, but its Attach Request never reached the MME. Start eNB2 without an X2 target in the idle case.
 - Takeaway: one passing run is not a result. Loop the scripted scenario a few times and keep the logs of the first failure.
+
+## L4. NR NTN: N2 handover between two trace-LEO gNBs (`fix/ntn-sw`)
+
+**Date / branch**: 2026-10-06, `fix/ntn-sw` (from `test/ntn-lte-sw`). Harness: `ci-scripts/yaml_files/ntn_lte_sw/ntn.sh`.
+
+**Result (measured)**:
+- Single link (gNB = rfsim server, SAT_LEO_TRANS trace): PDU session in 3–4 s, ping OK, RTT 53–78 ms; 4 of 5 runs. The failed run (no IP) came right after HO experiments.
+- Same link with the UE as rfsim server (needed for 2 gNBs): works after fix 1, and SIB19 now follows the trace.
+- Two gNBs, N2 HO triggered by `ci trigger_n2_ho`: RRC/NGAP complete (Handover Required/Command, RRCReconfigurationComplete, Handover Notify, source releases the UE). **The user plane does not survive**: no ping after the HO.
+- Terrestrial baseline (band78 pci0/pci1 confs, same host, UE server): N2 HO and ping after HO work.
+
+**Fixes / findings**:
+
+| # | Problem | Status |
+|---|---|---|
+| 1 | rfsim chose the channel direction by server/client role. With the UE as server, the UE ran the uplink model and called the gNB-only `nr_update_sib19` (`symbol lookup error`), and the gNB never updated SIB19 | Fixed: the direction follows the receiving node (`IS_SOFTMODEM_GNB/ENB`) in `simulator.cpp` |
+| 2 | Without `rfsimu_channel_ue1`, the 2nd client falls back to the `ue0` descriptor, shared by both links (start time, delay, Doppler phase): the UE lost sync as soon as gNB2 joined | Workaround: define `rfsimu_channel_ue1` (ntn.yaml) |
+| 3 | TRANS: after reconfigurationWithSync the UE sets `initial_fo` to the service-link Doppler of the target ntn-Config (56 kHz, `nr-ue.c:504`), but the rfsim TRANS model also applies the feeder-link Doppler (total 113 kHz): PBCH of the target is never decoded | Open. REGEN (no feeder link) syncs to the target |
+| 4 | REGEN: target sync and CFRA OK, then no user data; UE `max RETX reached on SRB 1` ~3 s later, then re-establishment; no SIB19 from the target before T430 expiry | Open |
+
+**Notes**:
+- Each rfsim link has its own trace clock (start of that connection). gNB2 joining 12 s later is a satellite 12 s behind on the same orbit; its SIB19 and the UE's `ue1` model agree.
+- The terrestrial N2 baseline is inter-frequency (3619.2 → 3319.68 MHz); the NTN pair is intra-frequency (same SSB ARFCN, SSB bitmap 1 vs 2).
