@@ -1,0 +1,82 @@
+# LTE: one UE (rfsim server) and two eNBs with X2, against an external Open5GS EPC.
+# Binaries come from a mounted build directory; see lte.sh and doc/lte-ue-enb-handover.md.
+x-oai: &oai
+  image: ${OAI_IMG:-ntn-dev}
+  privileged: true
+  volumes:
+    - ../../..:/oai-ran:ro
+    - ${BUILD_DIR:-../../../build}:/build
+  environment: &env
+    CONF: /oai-ran/ci-scripts/conf_files
+    LOG: --log_config.global_log_options level,nocolor,time --telnetsrv --telnetsrv.listenaddr 127.0.0.1
+
+x-enb: &enb
+  <<: *oai
+  command:
+    - bash
+    - -c
+    - >-
+      exec /build/lte-softmodem -O $$CONF/enb.band7.25prb.rfsim.conf --rfsim
+      --rfsimulator.[0].serveraddr $$RFSIM --rfsimulator.[0].enable_beams 1 --rfsimulator.[0].beam_gains $$GAIN
+      --eNBs.[0].eNB_ID $$ENB_ID --eNBs.[0].component_carriers.[0].Nid_cell $$PCI
+      --eNBs.[0].plmn_list.[0].mcc 1 --eNBs.[0].plmn_list.[0].mnc 1 --eNBs.[0].mme_ip_address.[0].ipv4 172.22.0.9
+      --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_S1_MME $$IP --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_S1U $$IP
+      --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_X2C $$IP --eNBs.[0].enable_x2 yes $$LOG $$EXTRA
+
+services:
+  lte-ue:
+    <<: *oai
+    container_name: lte-ue
+    cpuset: "0-3"
+    working_dir: /build/run/lte-ue
+    networks:
+      core: {ipv4_address: 172.22.0.61}
+    command:
+      - bash
+      - -c
+      - >-
+        /build/conf2uedata -c $$CONF/lteue.usim-open5gs.conf -o . &&
+        exec /build/lte-uesoftmodem -O $$CONF/lteue.rfsim.conf --rfsim --rfsimulator.[0].serveraddr server
+        --rfsimulator.[0].sync_clients 1 -C 2680000000 -r 25 --ue-rxgain 140 --ue-txgain 120 $$LOG
+
+  lte-enb1:
+    <<: *enb
+    container_name: lte-enb1
+    cpuset: "4-7"
+    working_dir: /build/run/lte-enb1
+    networks:
+      core: {ipv4_address: 172.22.0.60}
+    environment:
+      <<: *env
+      IP: 172.22.0.60
+      ENB_ID: 3585
+      PCI: 10
+      RFSIM: 172.22.0.61
+      GAIN: ${ENB1_GAIN:-0}
+      EXTRA: ${ENB1_EXTRA:-}
+
+  # joins the UE's radio late through rfsim-late (RRC_CONNECTED), or directly (RRC_IDLE)
+  lte-enb2:
+    <<: *enb
+    container_name: lte-enb2
+    cpuset: "8-11"
+    working_dir: /build/run/lte-enb2
+    networks:
+      core: {ipv4_address: 172.22.0.62}
+      late: {ipv4_address: 10.77.0.62}
+    environment:
+      <<: *env
+      IP: 172.22.0.62
+      ENB_ID: 3586
+      PCI: 11
+      RFSIM: ${ENB2_RFSIM:-10.77.0.61}
+      GAIN: ${ENB2_GAIN:--20}
+      EXTRA: ${ENB2_X2---eNBs.[0].target_enb_x2_ip_address.[0].ipv4 172.22.0.60} ${ENB2_EXTRA:-}
+
+networks:
+  core:
+    name: docker_open5gs_default
+    external: true
+  late:
+    name: rfsim-late
+    external: true

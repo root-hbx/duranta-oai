@@ -9,6 +9,8 @@ This tutorial moves one LTE UE from **eNB1** (PCI 10) to **eNB2** (PCI 11) in th
 
 > Code requirement: branch `fix/lte-sw`. Part B depends on its LTE handover fixes (UE measurements/A3, UE handover execution, random access with C-RNTI on the target, X2/SCTP/GTP fixes, rfsim `sync_clients`); stock OAI `develop` does not complete it. Part A uses only standard attach. See `lessons.md` L1–L3.
 
+> Packaged version: once the [Common setup](#common-setup) prerequisites are in place (build, Open5GS EPC), `ci-scripts/yaml_files/ntn_lte_sw/lte.sh` runs both parts (`lte.sh idle`; `lte.sh connected`, then `lte.sh ho 11`, `lte.sh ho 10`, `lte.sh ping`).
+
 [[_TOC_]]
 
 ## Common setup
