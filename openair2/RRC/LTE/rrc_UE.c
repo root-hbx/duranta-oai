@@ -3801,8 +3801,9 @@ void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t e
         AssertFatal(size >= 0, "do_MeasurementReport failed \n");
         LOG_I(RRC, "[UE %d] Frame %d : Generating Measurement Report for eNB %d. Size is %zu\n",
               ctxt_pP->module_id, ctxt_pP->frame, eNB_index, size);
-        const bool result = pdcp_data_req(ctxt_pP,  SRB_FLAG_YES, DCCH, rrc_mui++, 0, size, buffer, PDCP_TRANSMISSION_MODE_DATA,NULL, NULL);
-        AssertFatal (result == true, "PDCP data request failed!\n");
+        // SRB1 is briefly missing while a handover re-establishes it under the new C-RNTI
+        if (!pdcp_data_req(ctxt_pP, SRB_FLAG_YES, DCCH, rrc_mui++, 0, size, buffer, PDCP_TRANSMISSION_MODE_DATA, NULL, NULL))
+          LOG_W(RRC, "[UE %d] Frame %d: MeasurementReport dropped, no SRB1\n", ctxt_pP->module_id, ctxt_pP->frame);
         //LOG_D(RRC, "[UE %d] Frame %d Sending MeasReport (%d bytes) through DCCH%d to PDCP \n",ue_mod_idP,frameP, size, DCCH);
       }
 
