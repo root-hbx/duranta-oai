@@ -2074,7 +2074,8 @@ generate_ulsch_header(uint8_t *mac_header,
     mac_header_ptr->E = 0;
     mac_header_ptr->LCID = CRNTI;
     last_size = 1;
-    *((uint16_t *) ce_ptr) = (*crnti);
+    ce_ptr[0] = *crnti >> 8;
+    ce_ptr[1] = *crnti & 0xff;
     ce_ptr += sizeof(uint16_t);
     //    printf("offset %d\n",ce_ptr-mac_header_control_elements);
   }

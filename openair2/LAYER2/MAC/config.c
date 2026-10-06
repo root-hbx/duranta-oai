@@ -821,6 +821,8 @@ int rrc_mac_config_req_eNB(const module_id_t Mod_idP, const rrc_mac_config_req_e
       LOG_E(MAC, "%s:%d: fatal\n", __FILE__, __LINE__);
       abort();
     }
+    // handover target: not schedulable before the UE's Msg3 with its C-RNTI
+    UE_info->UE_sched_ctrl[UE_id].ul_out_of_sync = 1;
   }
 
   if (param->logicalChannelIdentity > 0) { // is SRB1,2 or DRB

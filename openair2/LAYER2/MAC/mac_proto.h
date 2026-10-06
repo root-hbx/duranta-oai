@@ -1193,6 +1193,7 @@ void Msg1_transmitted(module_id_t module_idP, uint8_t CC_id,
                       frame_t frameP, uint8_t eNB_id);
 void Msg3_transmitted(module_id_t module_idP, uint8_t CC_id,
                       frame_t frameP, uint8_t eNB_id);
+bool ue_ra_crnti_resolved(module_id_t module_idP, uint8_t eNB_index);
 uint32_t from_earfcn(int eutra_bandP, uint32_t dl_earfcn);
 int32_t get_uldl_offset(int eutra_bandP);
 int l2_init_ue(int eMBMS_active, char *uecap_xer, uint8_t cba_group_active,

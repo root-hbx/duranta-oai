@@ -18,6 +18,8 @@ void Msg1_transmitted(module_id_t module_idP, uint8_t CC_id,
 void Msg3_transmitted(module_id_t module_idP, uint8_t CC_id,
 		      frame_t frameP, uint8_t eNB_id){}
 
+bool ue_ra_crnti_resolved(module_id_t module_idP, uint8_t eNB_index) { return false; }
+
 uint32_t ue_get_SR(module_id_t module_idP, int CC_id, frame_t frameP,
 		   uint8_t eNB_id, rnti_t rnti, sub_frame_t subframe){ return(0);}
 
