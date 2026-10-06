@@ -587,8 +587,9 @@ static int sctp_create_new_listener(const instance_t instance, const task_id_t r
 {
   DevAssert(init_p != NULL);
   DevAssert(init_p->bind_address != NULL);
-  int in_streams = 1;
-  int out_streams = 1;
+  // stream 0 for non UE-associated, stream 1 for UE-associated signalling (e.g. X2AP handover, 36.422)
+  int in_streams = 2;
+  int out_streams = 2;
 
   /* local address: IPv4 has priority, but can also handle IPv6 */
   const char *local = init_p->bind_address;

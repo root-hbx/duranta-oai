@@ -772,26 +772,15 @@ int x2ap_eNB_generate_x2_handover_request_ack (x2ap_eNB_instance_t *instance_p, 
         {
           e_RABs_Admitted_Item->e_RAB_ID = x2ap_handover_req_ack->e_rabs_tobesetup[i].e_rab_id;
 	  e_RABs_Admitted_Item->uL_GTP_TunnelEndpoint = NULL;
-	  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint = (X2AP_GTPtunnelEndpoint_t *)calloc(1, sizeof(*e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint));
-		  
-	  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.size = (uint8_t)x2ap_handover_req_ack->e_rabs_tobesetup[i].eNB_addr.length;
-          e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.bits_unused = 0;
-          e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf =
-                        calloc(1, e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.size);
-
-          memcpy (e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf,
-                  x2ap_handover_req_ack->e_rabs_tobesetup[i].eNB_addr.buffer,
-                  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.size);
-
-          X2AP_DEBUG("X2 handover response target ip addr. length %lu bits_unused %d buf %d.%d.%d.%d\n",
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.size,
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.bits_unused,
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf[0],
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf[1],
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf[2],
-		  e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->transportLayerAddress.buf[3]);
-		  
-          INT32_TO_OCTET_STRING(x2ap_handover_req_ack->e_rabs_tobesetup[i].gtp_teid, &e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint->gTP_TEID);
+          // DL forwarding tunnel is optional: absent when the target does not set up X2-U data forwarding
+          if (x2ap_handover_req_ack->e_rabs_tobesetup[i].eNB_addr.length > 0) {
+            X2AP_GTPtunnelEndpoint_t *dl = calloc(1, sizeof(*dl));
+            dl->transportLayerAddress.size = x2ap_handover_req_ack->e_rabs_tobesetup[i].eNB_addr.length;
+            dl->transportLayerAddress.buf = calloc(1, dl->transportLayerAddress.size);
+            memcpy(dl->transportLayerAddress.buf, x2ap_handover_req_ack->e_rabs_tobesetup[i].eNB_addr.buffer, dl->transportLayerAddress.size);
+            INT32_TO_OCTET_STRING(x2ap_handover_req_ack->e_rabs_tobesetup[i].gtp_teid, &dl->gTP_TEID);
+            e_RABs_Admitted_Item->dL_GTP_TunnelEndpoint = dl;
+          }
         }
         asn1cSeqAdd(&ie->value.choice.E_RABs_Admitted_List.list, e_RABS_Admitted_ItemIEs);
       }
