@@ -150,3 +150,26 @@ Lessons learned from running OAI tests in practice. Each entry records what was 
 **Notes**:
 - Each rfsim link has its own trace clock (start of that connection). gNB2 joining 12 s later is a satellite 12 s behind on the same orbit; its SIB19 and the UE's `ue1` model agree.
 - The terrestrial N2 baseline is inter-frequency (3619.2 → 3319.68 MHz); the NTN pair is intra-frequency (same SSB ARFCN, SSB bitmap 1 vs 2).
+
+## L5. NR NTN: root causes of the Step 4 handover failures (`fix/ntn-sw`)
+
+**Date / branch**: 2026-10-07, `fix/ntn-sw` 11e5651f8d. Logs and the temporary patch: `build/ntn-dig/` (`tmpdig.patch`, reverted).
+
+**Conclusion (measured)**: neither failure is a 3GPP design defect. #1 is an OAI bug, #2 was our trace channel model. With the
+two fixes below (#1 still a temporary patch, #2 fixed in `feat/ntn-trace-leo` 2f39c647a9), N2 HO works in REGEN and TRANS. The ping gap is about 1.0–1.1 s (1 of 70 lost at a 0.5 s interval).
+The UE re-reads the target SIB19 every ~2.6 s and the link survives more than 30 s (T430 = 5 s).
+
+| # | Symptom | Root cause | Class |
+|---|---|---|---|
+| 1 | REGEN (also TRANS): the link dies about 5 s after HO with `T430 expired` → UL sync loss. Earlier notes said "SRB1 max RETX ~3 s", which was this | gNB `schedule_nr_other_sib` passes the transmitted-SSB **ordinal** to `other_sib_sched_control`. In NO_BEAM_MODE, `get_ssbidx_from_beam` maps it back to SSB 0, so the otherSI PDCCH uses `type0_PDCCH_CSS_config[0]`. With `ssb_PositionsInBurst_Bitmap 2` (gNB2), SIB19 is never decodable. A single cell with bitmap 2 and no HO shows the same thing. Using the real SSB index fixes it | OAI bug (gNB MAC) |
+| 2 | TRANS: target PBCH never decoded | Our trace LEO model (4b43626185) added the feeder-link Doppler on the downlink (total 113 kHz). Per TS 38.300 §16.14.2.2 the UE pre-compensates the service link only and the network handles the feeder link Doppler; the upstream circular-orbit model does the same. `--initial-fo 113269` hid it at initial access, but at HO the UE re-syncs with the service-only Doppler from the ephemeris. Fixed in 2f39c647a9 (service-link Doppler only, `ntn.yaml` UE FO 56634). After the fix: link OK, HO decodes the target PBCH and completes CFRA, then hits #1 | Our model bug (fixed) |
+| 3 | UE exits about 1.5 s after start with `unknown option --position0.*` | `position0` is read lazily (on SIB19). `config_check_unknown_cmdlineopt` runs first if SIB19 has not arrived yet | OAI bug (minor) |
+| 4 | Sporadic `Write queue full` assert in the UE (rfsim server) at startup | Real-time load; a retry works | Environment |
+
+**Controls**:
+- REGEN: 30 s of ping on gNB1 while gNB2 is on air shows 0 % loss. Intra-frequency interference is therefore not the cause.
+
+**Why no protocol issue showed up**: the scenario is too benign.
+- Both gNBs use the same trace and the same GW position. The target is the same satellite about 15 s later on the same pass.
+- At HO, source and target differ by only about 0.2 kHz of Doppler and 150 µs (REGEN) / 430 µs (TRANS) of TA (7.68 Msps). Real inter-satellite HO has tens of kHz and several ms.
+- To stress the NTN-specific mechanisms (target ntn-Config and epoch, T430 across HO, TA/Doppler jump, feeder/GW switch), Step 4 needs distinct satellites and/or gateways.
