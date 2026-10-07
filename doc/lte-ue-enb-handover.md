@@ -387,6 +387,35 @@ Use the gaps, not ping's overall loss percentage. The percentage also counts the
 docker rm -f lte-ue lte-enb1 lte-enb2
 ```
 
+## Packet captures
+
+`ci-scripts/yaml_files/ntn_lte_sw/lte_pcap.sh` repeats each part with tcpdump running. Each run gets its own directory under `build-lte/pcap/`, and a tarball is written at the end. Binaries come from `build-lte` (override with `BUILD_DIR`).
+
+```bash
+cd ci-scripts/yaml_files/ntn_lte_sw
+./lte_pcap.sh base 1        # RRC_CONNECTED on eNB1, no handover: the reference
+./lte_pcap.sh connected 5   # handover to PCI 11 and back to PCI 10, per run
+./lte_pcap.sh idle 3        # Part A
+```
+
+During each run, two ICMP flows run every 10 ms:
+- `ping_ul`: from the UE to the PGW;
+- `ping_dl`: from the PGW-U to the UE's IP. Without X2-U forwarding, the downlink packets in flight at the handover are lost.
+
+| File | Captured at | Shows |
+|---|---|---|
+| `core.pcap` | core network bridge (rfsim IQ excluded) | S1AP, X2AP, GTP-U (End Marker), GTP-C, PFCP, Diameter |
+| `mac.pcap` | core network bridge, UDP 9999 | MAC PDUs of every node (OPT, `--opt.type wireshark`); the source IP gives the node |
+| `sgi.pcap` | PGW-U `ogstun` | user plane on the network side, including the UE IP change in Part A |
+| `ue*.pcap` | UE container | user plane on the UE side (`oaitun_ue1`) |
+| `ping_*.txt`, `summary.txt`, `events.txt`, `logs/` | | ping with timestamps; reply gaps over 100 ms; script events; softmodem logs |
+
+The MAC traces go to the bridge gateway (`--opt.ip 172.22.0.1`), not to localhost. A local address makes OPT bind UDP 9999, and the LTE UE then exits, because its PDCP PC5 socket needs that port.
+
+Wireshark settings for `mac.pcap`:
+- Enable the heuristic `mac_lte_udp`, and set *MAC-LTE → Attempt to dissect frames that have failed CRC check*. The LTE OPT trace never sets the CRC status, so every frame is marked as failed.
+- Some CCCH frames decode as resume or reestablishment requests. They come from an eNB decoding uplink meant for the other cell.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

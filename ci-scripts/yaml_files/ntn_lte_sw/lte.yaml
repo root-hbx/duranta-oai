@@ -9,6 +9,7 @@ x-oai: &oai
   environment: &env
     CONF: /oai-ran/ci-scripts/conf_files
     LOG: --log_config.global_log_options level,nocolor,time --telnetsrv --telnetsrv.listenaddr 127.0.0.1
+    OPT: ${OPT:-}
 
 x-enb: &enb
   <<: *oai
@@ -21,7 +22,7 @@ x-enb: &enb
       --eNBs.[0].eNB_ID $$ENB_ID --eNBs.[0].component_carriers.[0].Nid_cell $$PCI
       --eNBs.[0].plmn_list.[0].mcc 1 --eNBs.[0].plmn_list.[0].mnc 1 --eNBs.[0].mme_ip_address.[0].ipv4 172.22.0.9
       --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_S1_MME $$IP --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_S1U $$IP
-      --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_X2C $$IP --eNBs.[0].enable_x2 yes $$LOG $$EXTRA
+      --eNBs.[0].NETWORK_INTERFACES.ENB_IPV4_ADDRESS_FOR_X2C $$IP --eNBs.[0].enable_x2 yes $$LOG $$OPT $$EXTRA
 
 services:
   lte-ue:
@@ -37,7 +38,7 @@ services:
       - >-
         /build/conf2uedata -c $$CONF/lteue.usim-open5gs.conf -o . &&
         exec /build/lte-uesoftmodem -O $$CONF/lteue.rfsim.conf --rfsim --rfsimulator.[0].serveraddr server
-        --rfsimulator.[0].sync_clients 1 -C 2680000000 -r 25 --ue-rxgain 140 --ue-txgain 120 $$LOG
+        --rfsimulator.[0].sync_clients 1 -C 2680000000 -r 25 --ue-rxgain 140 --ue-txgain 120 $$LOG $$OPT
 
   lte-enb1:
     <<: *enb
