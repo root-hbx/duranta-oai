@@ -7,7 +7,7 @@ This tutorial moves one LTE UE from **eNB1** (PCI 10) to **eNB2** (PCI 11) in th
 | **RRC_IDLE** | **Break-before-make.** The OAI LTE UE has no idle-mode cell reselection, so the UE process is restarted and attaches again through eNB2. | [Part A](#part-a-rrc_idle-break-before-make) |
 | **RRC_CONNECTED** | **X2 handover:** A3 → MeasurementReport → X2 HO Request/Ack → HO command → random access on eNB2 → ReconfigurationComplete → S1 Path Switch → eNB1 releases the UE context. | [Part B](#part-b-rrc_connected-x2-handover) |
 
-> Code requirement: branch `fix/lte-sw`. Part B depends on its LTE handover fixes (UE measurements/A3, UE handover execution, random access with C-RNTI on the target, X2/SCTP/GTP fixes, rfsim `sync_clients`); stock OAI `develop` does not complete it. Part A uses only standard attach. See `lessons.md` L1–L3.
+> Code requirement: branch `fix/lte-sw`. Part B depends on its LTE handover fixes (UE measurements/A3, UE handover execution, random access with C-RNTI on the target, X2/SCTP/GTP fixes, rfsim `sync_clients`); stock OAI `develop` does not complete it. Part A uses only standard attach.
 
 > Packaged version: once the [Common setup](#common-setup) prerequisites are in place (build, Open5GS EPC), `ci-scripts/yaml_files/ntn_lte_sw/lte.sh` runs both parts (`lte.sh idle`; `lte.sh connected`, then `lte.sh ho 11`, `lte.sh ho 10`, `lte.sh ping`).
 
@@ -151,7 +151,7 @@ enb_args() { local ip=$1 id=$2 pci=$3 rfsrv=$4 gain=$5
 
 ## Part A: RRC_IDLE (break-before-make)
 
-**Why break-before-make.** In RRC_IDLE the UE should change cells by itself, through cell reselection. The OAI LTE UE cannot do that (`lessons.md` L2):
+**Why break-before-make.** In RRC_IDLE the UE should change cells by itself, through cell reselection. The OAI LTE UE cannot do that:
 - No reselection: SIB3 reselection parameters are only printed.
 - No Service Request: a released UE cannot reconnect.
 - UE NAS never reaches EMM-REGISTERED.
