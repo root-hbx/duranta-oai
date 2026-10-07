@@ -1,6 +1,6 @@
 # NR NTN: one UE and two gNBs on a trace-driven LEO satellite (SAT_LEO_TRANS), against an external Open5GS 5GC.
 # Binaries come from a mounted build directory; see ntn.sh and doc/trace-based-ntn-tutorial.md.
-# Calibration (tools/ntn/calibrate_ntn.py) for the sample trace, UE = gNB at the mid-pass subpoint, fc 2488.4 MHz.
+# Calibration (tools/ntn/calc_ntn_parameters.py) for the sample trace, UE = gNB at the mid-pass subpoint, fc 2488.4 MHz.
 x-oai: &oai
   image: ${OAI_IMG:-ntn-dev}
   privileged: true
@@ -71,7 +71,7 @@ services:
         $$PROP_DELAY $$CHAN --position0.x -3310204.0 --position0.y -5006785.1 --position0.z 2157610.7
         --uicc0.imsi 001010000000001 --uicc0.key 465B5CE8B199B49FAA5F0A2EE238A6BC
         --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet
-        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-113269} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG
+        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG
 
   ntn-gnb1:
     <<: *gnb
