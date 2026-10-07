@@ -17,6 +17,7 @@ ping_ue() { docker exec lte-ue ping -I oaitun_ue1 -c ${1:-5} -W 2 192.168.96.1 |
 reset() { dc down 2>/dev/null; docker rm -f lte-ue lte-enb1 lte-enb2 >/dev/null 2>&1 || true; }
 late_net() { docker network inspect rfsim-late >/dev/null 2>&1 || docker network create --subnet 10.77.0.0/24 rfsim-late >/dev/null; }
 
+[ "$0" = "$BASH_SOURCE" ] || return 0  # sourced for its helpers (lte_cap.sh)
 case $1 in
   connected)
     late_net; reset
