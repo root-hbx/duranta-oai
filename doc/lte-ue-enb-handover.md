@@ -389,18 +389,21 @@ docker rm -f lte-ue lte-enb1 lte-enb2
 
 ## Packet captures
 
-`ci-scripts/yaml_files/ntn_lte_sw/lte_pcap.sh` repeats each part with tcpdump running. Each run gets its own directory under `build-lte/pcap/`, and a tarball is written at the end. Binaries come from `build-lte` (override with `BUILD_DIR`).
+Two scripts in `ci-scripts/yaml_files/ntn_lte_sw/` repeat each part with tcpdump running: `lte_ping.sh` (ICMP) and `lte_tcp.sh` (downlink TCP). Both use `lte_cap.sh` for the runs and the captures; a new traffic type only defines `traffic`, `traffic_stop` and `report`. Each run gets its own directory, `build-lte/pcap/<ping|tcp>-<part>-<run>-<time>/`, and a tarball is written at the end. Binaries come from `build-lte` (override with `BUILD_DIR`).
 
 ```bash
 cd ci-scripts/yaml_files/ntn_lte_sw
-./lte_pcap.sh base 1        # RRC_CONNECTED on eNB1, no handover: the reference
-./lte_pcap.sh connected 5   # handover to PCI 11 and back to PCI 10, per run
-./lte_pcap.sh idle 3        # Part A
+./lte_ping.sh base 1        # RRC_CONNECTED on eNB1, no handover: the reference
+./lte_ping.sh connected 5   # handover to PCI 11 and back to PCI 10, per run
+./lte_ping.sh idle 3        # Part A
+./lte_tcp.sh  connected 5   # same parts, with lte_tcp.sh
 ```
 
-During each run, two ICMP flows run every 10 ms:
+`lte_ping.sh` runs two ICMP flows, every 10 ms:
 - `ping_ul`: from the UE to the PGW;
 - `ping_dl`: from the PGW-U to the UE's IP. Without X2-U forwarding, the downlink packets in flight at the handover are lost.
+
+`lte_tcp.sh` runs iperf3 from the PGW-U (client, sender) to the UE (server), with 100 Mbit/s offered and reports every 100 ms. At 25 PRB, the radio limits it to about 12 Mbit/s. The captures keep only the first 128 bytes of each packet (300 bytes for `mac.pcap`).
 
 | File | Captured at | Shows |
 |---|---|---|
@@ -408,13 +411,16 @@ During each run, two ICMP flows run every 10 ms:
 | `mac.pcap` | core network bridge, UDP 9999 | MAC PDUs of every node (OPT, `--opt.type wireshark`); the source IP gives the node |
 | `sgi.pcap` | PGW-U `ogstun` | user plane on the network side, including the UE IP change in Part A |
 | `ue*.pcap` | UE container | user plane on the UE side (`oaitun_ue1`) |
-| `ping_*.txt`, `summary.txt`, `events.txt`, `logs/` | | ping with timestamps; reply gaps over 100 ms; script events; softmodem logs |
+| `iperf_core*.txt`, `iperf_ue*.txt`, `thr_ue.csv` | | TCP: sender rate, retransmissions and cwnd per 100 ms; receiver rate; UE goodput per 100 ms from `ue*.pcap` (epoch time) |
+| `ping_*.txt`, `summary.txt`, `events.txt`, `logs/` | | ping with timestamps; gaps over 100 ms (ping replies, or TCP data at the UE) and totals; script events; softmodem logs |
 
 The MAC traces go to the bridge gateway (`--opt.ip 172.22.0.1`), not to localhost. A local address makes OPT bind UDP 9999, and the LTE UE then exits, because its PDCP PC5 socket needs that port.
 
 Wireshark settings for `mac.pcap`:
 - Enable the heuristic `mac_lte_udp`, and set *MAC-LTE → Attempt to dissect frames that have failed CRC check*. The LTE OPT trace never sets the CRC status, so every frame is marked as failed.
 - Some CCCH frames decode as resume or reestablishment requests. They come from an eNB decoding uplink meant for the other cell.
+
+For TCP, open `sgi.pcap` (sender side) or `ue.pcap` (receiver side) and use *Statistics → TCP Stream Graphs* (Stevens / tcptrace, throughput, RTT) or *Statistics → I/O Graphs* with 100 ms intervals.
 
 ## Troubleshooting
 
