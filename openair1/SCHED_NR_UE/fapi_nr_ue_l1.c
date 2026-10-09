@@ -405,7 +405,17 @@ void nr_ue_phy_config_request(nr_phy_config_t *phy_config)
   fapi_nr_config_request_t *nrUE_config = &phy->nrUE_config;
   if(phy_config != NULL) {
     phy->received_config_request = true;
-    memcpy(nrUE_config, &phy_config->config_req, sizeof(fapi_nr_config_request_t));
+    // PHY owns these NTN fields (target cell epoch HFN fixed at sync), keep them unless MAC provides new parameters
+    const fapi_nr_ntn_config_t reserve_ntn = nrUE_config->ntn_config; // PHY backup
+    memcpy(nrUE_config, &phy_config->config_req, sizeof(fapi_nr_config_request_t)); // flush with MAC
+    // [NOBUG] Check if satellite-related parameters updated
+    // - If updated: flush with MAC
+    // - Else: flush, then use PHY backup
+    if (!phy_config->config_req.ntn_config.params_changed) {
+      nrUE_config->ntn_config.epoch_hfn = reserve_ntn.epoch_hfn;
+      nrUE_config->ntn_config.is_targetcell = reserve_ntn.is_targetcell;
+      nrUE_config->ntn_config.params_changed = reserve_ntn.params_changed;
+    }
   }
 }
 
