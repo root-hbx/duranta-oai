@@ -3773,6 +3773,8 @@ static void nr_mac_ue_transmission_timeout(gNB_MAC_INST *mac, NR_UE_info_t *UE, 
 int nr_transmission_action_indicator_stop(gNB_MAC_INST *mac, NR_UE_info_t *UE_info)
 {
   int delay = nr_mac_get_reconfig_delay_slots(UE_info->current_DL_BWP.scs);
+  // NTN: HARQ feedback comes Koffset slots later, leave time for retransmissions of the last DL message
+  delay += 2 * get_NTN_Koffset(UE_info->pcell->common_channels.ServingCellConfigCommon);
   nr_mac_ue_transmission_timeout(mac, UE_info, delay);
   LOG_I(NR_MAC, "gNB-DU received the TransmissionActionIndicator with Stop value for UE %04x\n", UE_info->rnti);
   return 0;
