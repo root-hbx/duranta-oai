@@ -793,6 +793,9 @@ void *UE_thread(void *arg)
   NR_UE_MAC_INST_t *mac = get_mac_inst(UE->Mod_id);
 
   bool syncRunning = false;
+  // a failed sync shifts the next capture by one frame: with a 20 ms SSB period, an SSB cut at the end of the
+  // 2-frame capture would otherwise stay cut in every retry, as the capture keeps its phase
+  bool shift_sync_capture = false;
   const int nb_slot_frame = fp->slots_per_frame;
   int absolute_slot = 0, decoded_frame_rx = MAX_FRAME_NUMBER - 1, skipped_frames = 0;
   int tx_wait_for_dlsch[NR_MAX_SLOTS_PER_FRAME];
@@ -826,6 +829,7 @@ void *UE_thread(void *arg)
 
       if (res) {
         syncRunning = false;
+        shift_sync_capture = !UE->is_synchronized && UE->sl_mode != 2;
         for (int i = 0; i < fp->nb_antennas_rx; i++)
           free(sync_buf[i]);
         if (UE->is_synchronized) {
@@ -882,6 +886,11 @@ void *UE_thread(void *arg)
         out_of_sync_rrc_tick_seeded = true;
       }
       int sz = compute_sync_size(UE);
+      if (shift_sync_capture) {
+        LOG_I(PHY, "Sync failed, shifting the next capture by one frame\n");
+        readFrame(UE, &sync_timestamp, duration_rx_to_tx, sz / 2, NULL);
+        out_of_sync_rrc_timer_tick(UE, 1, &out_of_sync_rrc_tick_frame, &out_of_sync_rrc_tick_hfn);
+      }
       for (int i = 0; i < fp->nb_antennas_rx; i++)
         sync_buf[i] = malloc(sz * sizeof(**sync_buf));
       readFrame(UE, &sync_timestamp, duration_rx_to_tx, sz, sync_buf);
