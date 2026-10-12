@@ -2042,6 +2042,12 @@ static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
                                                  uint8_t *const bufferP,
                                                  const uint8_t buffer_len)
 {
+  // handover: a MIB of the source cell still in the PHY pipeline must not be taken for the target cell's,
+  // else the MAC starts the RA on the source timing and SSB
+  if (nr_timer_is_active(&rrc->timers_and_constants.T304) && phycellid != rrc->phyCellID) {
+    RRCLOG_W("MIB of PCI %u ignored during handover to PCI %d\n", phycellid, rrc->phyCellID);
+    return;
+  }
   // MIB received on the target cell. Now process target ntncfg once new timing is received.
   if (phycellid == rrc->phyCellID && rrc->target_ntncfg) {
     rrc->process_target_ntncfg = true;
