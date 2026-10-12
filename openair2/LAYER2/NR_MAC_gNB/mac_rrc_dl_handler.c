@@ -863,8 +863,7 @@ void ue_context_modification_request(const f1ap_ue_context_mod_req_t *req)
   } else if (req->reconfig_compl) {
     LOG_I(NR_MAC, "DU received confirmation of successful RRC Reconfiguration\n");
     if (UE->reconfigCellGroup) {
-      /** During handover, target DU never sends RRC Reconfiguration (source DU does),
-       * so ack_reconfig is never called on target DU - this warning is expected.
+      /** On a handover target DU, CFRA already applied reconfigCellGroup (nr_rx_ra_sdu()).
        * If RRC Reconfiguration was sent via PDSCH, ack_reconfig should have been called when UE ACKed it.
        * If not, this warning would indicate a bug. */
       LOG_W(NR_MAC, "reconfigCellGroup still present, did we miss ACK for RRCReconfiguration?\n");

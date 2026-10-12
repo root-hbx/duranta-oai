@@ -2811,7 +2811,15 @@ static void create_dl_harq_list(NR_UE_sched_ctrl_t *sched_ctrl, const NR_UE_Serv
               sched_ctrl->available_dl_harq.len,
               sched_ctrl->feedback_dl_harq.len,
               sched_ctrl->retrans_dl_harq.len);
-  if (sched_ctrl->available_dl_harq.len == 0) {
+  // fewer processes (back to DCI 0_0/1_0, e.g. Msg3 with C-RNTI): only possible when none is in use
+  const bool shrink = sched_ctrl->available_dl_harq.len > nrofHARQ && sched_ctrl->feedback_dl_harq.head < 0
+                      && sched_ctrl->retrans_dl_harq.head < 0;
+  if (shrink) {
+    destroy_nr_list(&sched_ctrl->available_dl_harq);
+    destroy_nr_list(&sched_ctrl->feedback_dl_harq);
+    destroy_nr_list(&sched_ctrl->retrans_dl_harq);
+  }
+  if (sched_ctrl->available_dl_harq.len == 0 || shrink) {
     create_nr_list(&sched_ctrl->available_dl_harq, nrofHARQ);
     for (int harq = 0; harq < nrofHARQ; harq++)
       add_tail_nr_list(&sched_ctrl->available_dl_harq, harq);
@@ -2838,7 +2846,15 @@ static void create_ul_harq_list(NR_UE_sched_ctrl_t *sched_ctrl, const NR_UE_Serv
   // limit the number of HARQ PIDs to 16 in case of common search space
   if (dci_00_10 && nrofHARQ > 16)
     nrofHARQ = 16;
-  if (sched_ctrl->available_ul_harq.len == 0) {
+  // fewer processes (back to DCI 0_0/1_0, e.g. Msg3 with C-RNTI): only possible when none is in use
+  const bool shrink = sched_ctrl->available_ul_harq.len > nrofHARQ && sched_ctrl->feedback_ul_harq.head < 0
+                      && sched_ctrl->retrans_ul_harq.head < 0;
+  if (shrink) {
+    destroy_nr_list(&sched_ctrl->available_ul_harq);
+    destroy_nr_list(&sched_ctrl->feedback_ul_harq);
+    destroy_nr_list(&sched_ctrl->retrans_ul_harq);
+  }
+  if (sched_ctrl->available_ul_harq.len == 0 || shrink) {
     create_nr_list(&sched_ctrl->available_ul_harq, nrofHARQ);
     for (int harq = 0; harq < nrofHARQ; harq++)
       add_tail_nr_list(&sched_ctrl->available_ul_harq, harq);
