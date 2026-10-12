@@ -12,6 +12,7 @@ cd "$(dirname "$0")"
 [ -n "$REGEN" ] && export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 PROP_DELAY=4 UE_FO=56634 UE_DRIFT=-23 UE_FO_COMP=3
 dc() { docker compose -p ntn_sw -f ntn.yaml "$@"; }
 tn() { docker exec $1 bash -c "exec 3<>/dev/tcp/127.0.0.1/9090; echo '$2' >&3; timeout 1 cat <&3" | tr -d '\r'; }
+count() { docker logs $1 2>&1 | grep -c "$2" || true; }
 wait_log() { for i in $(seq ${3:-60}); do docker logs $1 2>&1 | grep -q "$2" && return; sleep 1; done; echo "timeout: $1 '$2'"; return 1; }
 ue_ip() { for i in $(seq ${1:-90}); do docker exec nr-ue ip -br -4 addr show oaitun_ue1 2>/dev/null | grep -q '\.' && return; sleep 1; done; echo "timeout: UE IP"; return 1; }
 ping_ue() { docker exec nr-ue ping -I oaitun_ue1 -c ${1:-5} -W 2 192.168.96.1 | tail -2; }
@@ -31,10 +32,11 @@ case $1 in
     dc up -d ntn-gnb2; wait_log ntn-gnb2 'Connection to 172.22.0.71'; echo "gNB2 on air" ;;
   ho)
     src=ntn-gnb$(( 2 - $2 ))
-    n=$(docker logs nr-ue 2>&1 | grep -c 'Processing reconfigurationWithSync' || true)
+    n=$(count nr-ue 'Processing reconfigurationWithSync'); m=$(count nr-ue "Initial sync successful, PCI: $2")
     tn $src "ci trigger_n2_ho $2,1" | grep -i handover
-    for i in $(seq 10); do sleep 1; [ $(docker logs nr-ue 2>&1 | grep -c 'Processing reconfigurationWithSync') -gt $n ] && break; done
-    wait_log nr-ue "Initial sync successful, PCI: $2" 20 && echo "UE synced to PCI $2" ;;
+    for i in $(seq 10); do sleep 1; [ $(count nr-ue 'Processing reconfigurationWithSync') -gt $n ] && break; done
+    for i in $(seq 20); do [ $(count nr-ue "Initial sync successful, PCI: $2") -gt $m ] && echo "UE synced to PCI $2" && exit; sleep 1; done
+    echo "HO to PCI $2 FAILED"; exit 1 ;;
   ping) ping_ue $2 ;;
   tn) tn $2 "$3" ;;
   down) reset ;;

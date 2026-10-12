@@ -26,8 +26,16 @@ logs() { mkdir -p $out/logs; for n in "$@"; do docker logs $n > $out/logs/$n.log
 finish() { traffic_stop; sleep 1
   uncap core ngap mac sgi ue; logs nr-ue ntn-gnb1 ntn-gnb2; wait
   { echo "UE reconfigurationWithSync: $(grep -c 'Received reconfigurationWithSync' $out/logs/nr-ue.log)," \
-      "gNB handover complete: $(cat $out/logs/ntn-gnb*.log | grep -c 'handover for UE .* complete')"; report; } | tee $out/summary.txt
+      "gNB handover complete: $(cat $out/logs/ntn-gnb*.log | grep -c 'handover for UE .* complete')"; simwall; report; } |
+    tee $out/summary.txt
   docker run --rm -v $out:/cap --entrypoint chown docker_open5gs -R $(id -u):$(id -g) /cap; }
+
+# simulated / wall-clock time from the UE "stats sfn" lines (one per 128 frames): rfsim is not paced in real time
+simwall() { awk '/stats sfn:/ { split($0, a, "sfn: "); s = int(a[2]); t = $1
+    if (pt && (s - ps + 1024) % 1024 == 128) { n++; w += t - pt }
+    pt = t; ps = s }
+  END { if (!n) exit; r = n * 1.28 / w; printf "sim/wall %.2f over %d x 1.28 s%s\n", r, n, (r < 0.9 || r > 1.1) ? "  WARNING: rates not comparable" : "" }' \
+  $out/logs/nr-ue.log; }
 
 run_connected() { up; out=$PCAP_DIR/$KIND-$mode-$1-$2-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
   cap core host $core_if 'not tcp port 4043 and not udp port 9999' $SNAP; cap ngap host $core_if 'sctp or udp port 8805'
