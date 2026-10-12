@@ -10,7 +10,7 @@
 source "$(dirname "$0")/ntn.sh"
 repo=$(cd ../../.. && pwd)
 mode=trans; [ -n "$REGEN" ] && mode=regen
-export OPT=${OPT---opt.type wireshark --opt.ip 172.22.0.1} PRACH_THRES=${PRACH_THRES:-450}
+export OPT=${OPT---opt.type wireshark --opt.ip 172.22.0.1}
 PCAP_DIR=${PCAP_DIR:-$repo/build/pcap-ntn}
 core_if=br-$(docker network inspect -f '{{.Id}}' docker_open5gs_default | cut -c1-12)
 radio='not tcp port 4043 and not udp port 9999 and not tcp port 9090'

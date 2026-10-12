@@ -760,6 +760,13 @@ void nr_initiate_ra_proc(module_id_t module_idP,
     }
 
     UE = get_new_nr_ue_inst(&nr_mac->UE_info.uid_allocator, rnti, NULL, cell);
+    // keep the last UE ID for incoming handovers, whose UE context setup cannot fail (create_new_UE())
+    if (UE->uid >= MAX_MOBILES_PER_GNB - 1) {
+      LOG_W(NR_MAC, "%4d.%2d preamble index %d dropped: last UE ID kept for handover\n", frame, slot, preamble_index);
+      delete_nr_ue_data(UE, &nr_mac->UE_info.uid_allocator);
+      NR_SCHED_UNLOCK(&nr_mac->sched_lock);
+      return;
+    }
     if (!add_new_UE_RA(nr_mac, UE)) {
       LOG_E(NR_MAC, "FAILURE: %4d.%2d initiating RA procedure for preamble index %d: no free RA process\n", frame, slot, preamble_index);
       delete_nr_ue_data(UE, &nr_mac->UE_info.uid_allocator);
