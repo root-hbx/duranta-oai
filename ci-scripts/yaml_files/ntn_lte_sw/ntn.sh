@@ -9,7 +9,7 @@
 #   ntn.sh tn <node> <cmd>  telnet command to a softmodem
 set -e
 cd "$(dirname "$0")"
-[ -n "$REGEN" ] && export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 PROP_DELAY=4 UE_FO=56634 UE_DRIFT=-23 UE_FO_COMP=3
+[ -n "$REGEN" ] && export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 KOFFSET=${KOFFSET:-10} PROP_DELAY=4 UE_FO=56634 UE_DRIFT=-23 UE_FO_COMP=3
 dc() { docker compose -p ntn_sw -f ntn.yaml "$@"; }
 tn() { docker exec $1 bash -c "exec 3<>/dev/tcp/127.0.0.1/9090; echo '$2' >&3; timeout 1 cat <&3" | tr -d '\r'; }
 count() { docker logs $1 2>&1 | grep -c "$2" || true; }
