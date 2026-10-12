@@ -86,11 +86,11 @@ services:
       IP: 172.22.0.70
       GNB_ID: "0xe00"
       CELL: 12345678
-      PCI: 0
-      SSB: 1
+      PCI: ${GNB1_PCI:-0}
+      SSB: ${GNB1_SSB:-1}
       PEER_ID: "0xe01"
       PEER_CELL: 12345679
-      PEER_PCI: 1
+      PEER_PCI: ${GNB2_PCI:-1}
       RFSIM: ${GNB1_RFSIM:-server}
       EXTRA: ${GNB1_EXTRA:-}
 
@@ -106,11 +106,11 @@ services:
       IP: 172.22.0.72
       GNB_ID: "0xe01"
       CELL: 12345679
-      PCI: 1
-      SSB: 2
+      PCI: ${GNB2_PCI:-1}
+      SSB: ${GNB2_SSB:-2}
       PEER_ID: "0xe00"
       PEER_CELL: 12345678
-      PEER_PCI: 0
+      PEER_PCI: ${GNB1_PCI:-0}
       RFSIM: ${GNB2_RFSIM:-172.22.0.71}
       EXTRA: ${GNB2_EXTRA:-}
 
