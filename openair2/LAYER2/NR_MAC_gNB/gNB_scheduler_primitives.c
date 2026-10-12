@@ -3169,7 +3169,8 @@ static void init_bler_stats(const NR_bler_options_t *bler_options, NR_bler_stats
 {
   bler_stats->last_frame = frame;
   bler_stats->mcs = bler_options->min_mcs;
-  bler_stats->bler = (float)(bler_options->lower + bler_options->upper) / 2.0f;
+  // start at the lower target: a new UE (e.g. after a handover) starts at min_mcs and has to climb right away
+  bler_stats->bler = bler_options->lower;
 }
 
 /* @brief returns a new UE allocated instance.
