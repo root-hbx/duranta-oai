@@ -17,6 +17,7 @@ ue_ip() { for i in $(seq ${1:-90}); do docker exec nr-ue ip -br -4 addr show oai
 ping_ue() { docker exec nr-ue ping -I oaitun_ue1 -c ${1:-5} -W 2 192.168.96.1 | tail -2; }
 reset() { dc down 2>/dev/null; docker rm -f nr-ue ntn-gnb1 ntn-gnb2 >/dev/null 2>&1 || true; }
 
+[ "$0" = "$BASH_SOURCE" ] || return 0  # sourced for its helpers (ntn_cap.sh)
 case $1 in
   link)
     reset

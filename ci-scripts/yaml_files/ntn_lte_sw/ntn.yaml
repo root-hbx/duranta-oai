@@ -10,6 +10,7 @@ x-oai: &oai
   environment: &env
     CONF: /oai-ran/ci-scripts/conf_files
     LOG: --log_config.global_log_options level,nocolor,time --telnetsrv --telnetsrv.listenaddr 127.0.0.1 --telnetsrv.shrmod ci
+    OPT: ${OPT:-}
     PROP_DELAY: --rfsimulator.[0].prop_delay ${PROP_DELAY:-8}
     CHAN: >-
       --channelmod.modellist_rfsimu_1.[0].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[0].sat_trace_file /oai-ran/tools/ntn/data/orbital_trace_s_300.csv
@@ -50,7 +51,7 @@ x-gnb: &gnb
       --gNBs.[0].neighbour_list.[0].nr_cellid $$CELL $$(for k in gNB_ID:$$PEER_ID nr_cellid:$$PEER_CELL physical_cellId:$$PEER_PCI
       absoluteFrequencySSB:497770 subcarrierSpacing:0 band:254 tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
       do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[0].$${k%%:*} $${k#*:}; done)
-      $$LOG $$EXTRA
+      --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-150} $$LOG $$OPT $$EXTRA
 
 services:
   nr-ue:
@@ -71,7 +72,7 @@ services:
         $$PROP_DELAY $$CHAN --position0.x -3310204.0 --position0.y -5006785.1 --position0.z 2157610.7
         --uicc0.imsi 001010000000001 --uicc0.key 465B5CE8B199B49FAA5F0A2EE238A6BC
         --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet
-        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG
+        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG $$OPT
 
   ntn-gnb1:
     <<: *gnb
