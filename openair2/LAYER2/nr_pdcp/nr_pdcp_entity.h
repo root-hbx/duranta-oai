@@ -171,6 +171,9 @@ typedef struct nr_pdcp_entity_s {
   /* Keep tracks of whether the PDCP entity was suspended or not */
   bool entity_suspended;
 
+  /* gNB handover source: no new DL SDUs once the COUNT values went to the target (no data forwarding) */
+  bool tx_frozen;
+
   /* PDCP Count API */
   nr_pdcp_count_t (*get_pdcp_count_dl)(struct nr_pdcp_entity_s *entity);
   nr_pdcp_count_t (*get_pdcp_count_ul)(struct nr_pdcp_entity_s *entity);
