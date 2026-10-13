@@ -3775,6 +3775,13 @@ int nr_mac_get_reconfig_delay_slots(NR_SubcarrierSpacing_t scs)
   return (delay_ms << scs) + sl_ahead;
 }
 
+// upper bound of the DL HARQ round trip, NTN: the HARQ feedback comes Koffset slots later
+static int nr_mac_harq_rtt_slots(const NR_UE_info_t *UE)
+{
+  int delay = nr_mac_get_reconfig_delay_slots(UE->current_DL_BWP.scs);
+  return delay + get_NTN_Koffset(UE->pcell->common_channels.ServingCellConfigCommon);
+}
+
 static void nr_mac_ue_transmission_timeout(gNB_MAC_INST *mac, NR_UE_info_t *UE, int slots)
 {
   DevAssert(mac != NULL);
@@ -3789,10 +3796,11 @@ static void nr_mac_ue_transmission_timeout(gNB_MAC_INST *mac, NR_UE_info_t *UE, 
 
 int nr_transmission_action_indicator_stop(gNB_MAC_INST *mac, NR_UE_info_t *UE_info)
 {
-  int delay = nr_mac_get_reconfig_delay_slots(UE_info->current_DL_BWP.scs);
-  // NTN: HARQ feedback comes Koffset slots later, leave time for retransmissions of the last DL message
-  delay += 2 * get_NTN_Koffset(UE_info->pcell->common_channels.ServingCellConfigCommon);
-  nr_mac_ue_transmission_timeout(mac, UE_info, delay);
+  // the UE fails once it has not answered DL HARQ for a HARQ round trip (see nr_mac_update_timers()), so that the
+  // last DL message (e.g., the handover command) gets its retransmissions, at the latest after two rounds of them
+  int harq_rtt = nr_mac_harq_rtt_slots(UE_info);
+  UE_info->UE_sched_ctrl.transm_timeout_idle = 0;
+  nr_mac_ue_transmission_timeout(mac, UE_info, 2 * UE_info->pcell->dl_bler.harq_round_max * harq_rtt);
   LOG_I(NR_MAC, "gNB-DU received the TransmissionActionIndicator with Stop value for UE %04x\n", UE_info->rnti);
   return 0;
 }
@@ -3870,7 +3878,12 @@ void nr_mac_update_timers(gNB_MAC_INST *mac, nr_cell_sched_t *cell)
       /* expired */
       nr_timer_stop(&sched_ctrl->transm_interrupt);
     }
-    if (nr_timer_tick(&sched_ctrl->transm_timeout)) {
+    // after a transmission stop, the UE fails once it stops answering (e.g., it left with the handover command)
+    bool timeout = nr_timer_tick(&sched_ctrl->transm_timeout);
+    if (nr_timer_is_active(&sched_ctrl->transm_timeout) && ++sched_ctrl->transm_timeout_idle >= nr_mac_harq_rtt_slots(UE)) {
+      timeout = true;
+    }
+    if (timeout) {
       nr_timer_stop(&sched_ctrl->transm_timeout);
       LOG_W(NR_MAC, "UE %04x UL failure after transmission timeout\n", UE->rnti);
       nr_mac_trigger_ul_failure(sched_ctrl, UE->current_DL_BWP.scs);

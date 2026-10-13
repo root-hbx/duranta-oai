@@ -727,6 +727,8 @@ typedef struct {
   /// Timer for timeout before UE is set to UL failure (e.g.,
   /// "TransmissionActionIndicator" handling
   NR_timer_t transm_timeout;
+  /// slots since the last DL HARQ feedback of the UE while transm_timeout runs
+  int transm_timeout_idle;
 
   /// sri, ul_ri and tpmi based on SRS
   nr_srs_feedback_t srs_feedback;
