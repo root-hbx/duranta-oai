@@ -35,6 +35,7 @@
 #include "nr-uesoftmodem.h"
 #include "plmn_data.h"
 #include "nr_pdcp/nr_pdcp_oai_api.h"
+#include "nr_pdcp/nr_pdcp_asn1_utils.h"
 #include "openair3/SECU/secu_defs.h"
 #include "openair3/SECU/key_nas_deriver.h"
 
@@ -785,7 +786,12 @@ static void rrc_ue_add_bearer(const int ue_id, const NR_DRB_ToAddMod_t *drb, con
   }
   // add SDAP entity
   nr_sdap_addmod_entity(GNB_FLAG_NO, ue_id, &sdap);
-  // add PDCP entity
+  // add PDCP entity, its discardTimer applies to the RLC entity of the DRB, created before or after it
+  if (drb->pdcp_Config && drb->pdcp_Config->drb && drb->pdcp_Config->drb->discardTimer) {
+    int discard_timer = decode_discard_timer(*drb->pdcp_Config->drb->discardTimer);
+    nr_rlc_set_drb_discard_timer(discard_timer);
+    nr_rlc_update_drb_discard_timer(ue_id, drb->drb_Identity, discard_timer);
+  }
   nr_pdcp_add_drb(GNB_FLAG_NO, ue_id, drb->pdcp_Config, &sdap, sp);
 }
 

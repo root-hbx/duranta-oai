@@ -60,6 +60,10 @@ void nr_mac_rlc_status_ind(uint16_t ue_id, frame_t frame, int n_ch, const logica
 
 void nr_rlc_add_srb(int ue_id, int srb_id, const NR_RLC_BearerConfig_t *rlc_BearerConfig);
 void nr_rlc_add_drb(int ue_id, int drb_id, const NR_RLC_BearerConfig_t *rlc_BearerConfig);
+/* PDCP discardTimer (unit ms, -1 for infinity) applied by the DRB RLC entities created from now on */
+void nr_rlc_set_drb_discard_timer(int discard_timer);
+/* ... and by the existing RLC entity of a DRB */
+void nr_rlc_update_drb_discard_timer(int ue_id, int drb_id, int discard_timer);
 
 void nr_rlc_set_rlf_handler(int ue_id, rlf_handler_t rlf_h);
 

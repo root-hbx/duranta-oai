@@ -585,6 +585,7 @@ void nr_rlc_entity_um_recv_sdu(nr_rlc_entity_t *_entity,
   entity->tx_size += size;
 
   sdu = nr_rlc_new_sdu(buffer, size, sdu_id);
+  sdu->sdu->t_arrival = entity->t_current;
 
   nr_rlc_sdu_segment_list_append(&entity->tx_list, &entity->tx_end, sdu);
 
@@ -648,6 +649,36 @@ static void check_t_reassembly(nr_rlc_entity_um_t *entity)
   }
 }
 
+static void check_discard_timer(nr_rlc_entity_um_t *entity)
+{
+  int discard_timer = entity->common.discard_timer;
+  if (discard_timer == 0)
+    return;
+
+  /* a segmented head is partly submitted to MAC already and stays, the SDUs after it are in arrival order */
+  nr_rlc_sdu_segment_t *prev = NULL;
+  nr_rlc_sdu_segment_t *cur = entity->tx_list;
+  if (cur != NULL && !cur->is_first) {
+    prev = cur;
+    cur = cur->next;
+  }
+  while (cur != NULL && cur->is_first && cur->is_last && entity->t_current > cur->sdu->t_arrival + discard_timer) {
+    nr_rlc_sdu_segment_t *next = cur->next;
+    if (prev != NULL)
+      prev->next = next;
+    else
+      entity->tx_list = next;
+    if (entity->tx_end == cur)
+      entity->tx_end = prev;
+    entity->common.bstatus.tx_size -= compute_pdu_header_size(entity, cur) + cur->size;
+    entity->tx_size -= cur->sdu->size;
+    entity->common.stats.txpdu_dd_pkts++;
+    entity->common.stats.txpdu_dd_bytes += cur->sdu->size;
+    nr_rlc_free_sdu_segment(cur);
+    cur = next;
+  }
+}
+
 void nr_rlc_entity_um_set_time(nr_rlc_entity_t *_entity, uint64_t now)
 {
   nr_rlc_entity_um_t *entity = (nr_rlc_entity_um_t *)_entity;
@@ -655,6 +686,8 @@ void nr_rlc_entity_um_set_time(nr_rlc_entity_t *_entity, uint64_t now)
   entity->t_current = now;
 
   check_t_reassembly(entity);
+
+  check_discard_timer(entity);
 }
 
 /*************************************************************************/

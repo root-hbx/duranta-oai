@@ -58,6 +58,7 @@
 #include "positioning_nr_paramdef.h"
 #include "f1ap_cu_task.h"
 #include "openair3/NRPPA/nrppa_gNB_config.h"
+#include "LAYER2/nr_rlc/nr_rlc_oai_api.h"
 
 static int DEFBANDS[] = {7};
 static int DEFENBS[] = {0};
@@ -2488,6 +2489,8 @@ gNB_RRC_INST *RCconfig_NRRRC()
 
   config_rlc(config_get_if(), &rrc->rlc_config);
   config_pdcp(config_get_if(), &rrc->pdcp_config);
+  // the gNB applies its DRB discardTimer to DL like the UE to UL
+  nr_rlc_set_drb_discard_timer(rrc->pdcp_config.drb.discard_timer);
 
   config_nrdc(config_get_if(), &rrc->nrdc_config);
 

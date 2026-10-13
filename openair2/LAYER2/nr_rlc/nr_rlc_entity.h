@@ -116,6 +116,8 @@ typedef struct nr_rlc_entity_s {
   nr_rlc_statistics_t stats;
   time_average_t *txsdu_avg_time_to_tx;
   int             avg_time_is_on;
+  /* PDCP discardTimer (38.323 5.2.1) for the SDUs not yet submitted to MAC (38.322 5.4), unit ms, 0 for infinity */
+  int discard_timer;
 } nr_rlc_entity_t;
 
 nr_rlc_entity_t *new_nr_rlc_entity_am(int rx_maxsize,
