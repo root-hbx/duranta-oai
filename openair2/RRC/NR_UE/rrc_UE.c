@@ -549,40 +549,34 @@ static void nr_rrc_process_sib1(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *SI_inf
  * @param kamf K_AMF key from NAS
  * @param kgnb Current KgNB key (input/output)
  * @param nh Current NH parameter (input/output)
- * @param nhcc Pointer to current nextHopChainingCount (input/output)
- * @param target_ncc Target nextHopChainingCount value to synchronize to */
+ * @param nhcc Pointer to the number of NH derivations so far (input/output)
+ * @param target Number of NH derivations to reach */
 static void nr_sync_nh_chain(const uint8_t kamf[SECURITY_KEY_LEN],
                              uint8_t kgnb[SECURITY_KEY_LEN],
                              uint8_t nh[SECURITY_KEY_LEN],
                              uint64_t *nhcc,
-                             const int8_t target_ncc)
+                             const uint64_t target)
 {
   // If the UE received an NCC value that was different from the NCC associated with the
   // currently active KgNB, the UE shall first synchronize the locally kept NH
   // parameter by computing the function defined in Annex A.10 iteratively (and increasing
   // the NCC value until it matches the NCC value received from the source ng-gNB).
-  if (target_ncc <= *nhcc) {
-    LOG_W(NR_RRC, "Received NCC=%d is less than or equal to current nhcc=%ld (nothing to sync)\n", target_ncc, *nhcc);
-    return;
+  LOG_I(NR_RRC, "Synchronizing NH chain: current nhcc=%ld, target %ld\n", *nhcc, target);
+  if (*nhcc == 0) {
+    // First derivation: derive KgNB from KAMF, then derive NH from KgNB (per TS 33.501 A.10)
+    // Note: For the first NH derivation, we use UL NAS COUNT = 0 to match the AMF's derivation
+    // during handover. The AMF derives the first NH using the UL NAS COUNT from the last
+    // successful NAS SMC, which is 0 for the initial derivation.
+    derive_kgnb(kamf, 0, kgnb);
+    nr_derive_nh(kamf, kgnb, nh);
+    *nhcc = 1;
   }
-  if (target_ncc > *nhcc) {
-    LOG_I(NR_RRC, "Synchronizing NH chain: current nhcc=%ld, target ncc=%d\n", *nhcc, target_ncc);
-    if (*nhcc == 0) {
-      // First derivation: derive KgNB from KAMF, then derive NH from KgNB (per TS 33.501 A.10)
-      // Note: For the first NH derivation, we use UL NAS COUNT = 0 to match the AMF's derivation
-      // during handover. The AMF derives the first NH using the UL NAS COUNT from the last
-      // successful NAS SMC, which is 0 for the initial derivation.
-      derive_kgnb(kamf, 0, kgnb);
-      nr_derive_nh(kamf, kgnb, nh);
-      *nhcc = 1;
-    }
-    // Following derivations: iterate from current nhcc to target_ncc
-    for (uint8_t i = *nhcc; i < target_ncc; i++) {
-      LOG_D(NR_RRC, "Derive keys for ChainingCount = %d\n", i);
-      nr_derive_nh(kamf, nh, nh);
-    }
-    *nhcc = target_ncc;
+  // Following derivations: iterate from current nhcc to target
+  for (uint64_t i = *nhcc; i < target; i++) {
+    LOG_D(NR_RRC, "Derive keys for ChainingCount = %ld\n", i);
+    nr_derive_nh(kamf, nh, nh);
   }
+  *nhcc = target;
 }
 
 /** @brief Derive KNG-RAN* (KgNB*) using horizontal derivation
@@ -646,27 +640,19 @@ static void nr_derive_kgnb_vertical(const uint16_t pci,
  * @param received_ncc Received nextHopChainingCount value */
 static void nr_update_kgnb_from_ncc(NR_UE_RRC_INST_t *rrc, const uint8_t kamf[SECURITY_KEY_LEN], int8_t received_ncc)
 {
-  const uint64_t original_nhcc = rrc->nhcc;
-
-  if (received_ncc == original_nhcc) {
+  // NCC is the 3 least significant bits of the NH chain count, it wraps around (TS 33.501 6.9.2.3.3)
+  const int steps = (received_ncc - rrc->nhcc) & 7;
+  if (steps == 0) {
     // NCC values match: use horizontal derivation from currently active KgNB
     // Per TS 33.501 6.9.2.3.4: "derive the KNG-RAN* from the currently active KgNB"
     // This applies regardless of NCC being 0 or >0. For a fixed NCC level, we stay
     // within that level using horizontal derivations.
     RRCLOG_D("NCC values match (%d), using horizontal derivation\n", received_ncc);
     nr_derive_kgnb_horizontal(rrc->phyCellID, rrc->arfcn_ssb, rrc->kgnb);
-  } else if (received_ncc < original_nhcc) {
-    // Note: According to spec, NCC should only increase. If received_ncc < original_nhcc,
-    // this is an error condition, but we handle it gracefully.
-    RRCLOG_W("Received NCC=%d is less than current nhcc=%ld (unexpected per spec, NH chain should only increase)\n",
-             received_ncc,
-             original_nhcc);
   } else {
-    // received_ncc > original_nhcc: synchronize NH chain first (per 33.501 A.10)
-    nr_sync_nh_chain(kamf, rrc->kgnb, rrc->nh, &rrc->nhcc, received_ncc);
-    // Store the received nextHopChainingCount value (per 38.331 5.3.7.5)
+    // received NCC ahead of the current one: synchronize NH chain first (per 33.501 A.10)
     RRCLOG_D("Synchronizing NH chain to target NCC %d\n", received_ncc);
-    rrc->nhcc = received_ncc;
+    nr_sync_nh_chain(kamf, rrc->kgnb, rrc->nh, &rrc->nhcc, rrc->nhcc + steps);
     // After synchronization, derive KNG-RAN* from synchronized NH (vertical derivation)
     // per 33.501 6.9.2.3.4: "When the NCC values match, the UE shall compute the K NG-RAN *
     // from the synchronized NH parameter"
