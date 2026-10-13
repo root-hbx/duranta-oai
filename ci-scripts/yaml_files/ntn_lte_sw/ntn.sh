@@ -17,16 +17,19 @@ wait_log() { for i in $(seq ${3:-60}); do docker logs $1 2>&1 | grep -q "$2" && 
 ue_ip() { for i in $(seq ${1:-90}); do docker exec nr-ue ip -br -4 addr show oaitun_ue1 2>/dev/null | grep -q '\.' && return; sleep 1; done; echo "timeout: UE IP"; return 1; }
 ping_ue() { docker exec nr-ue ping -I oaitun_ue1 -c ${1:-5} -W 2 192.168.96.1 | tail -2; }
 reset() { dc down 2>/dev/null; docker rm -f nr-ue ntn-gnb1 ntn-gnb2 >/dev/null 2>&1 || true; }
+# a fresh AMF per run: after a failed handover it may keep the old gNB association and refuse the new gNB2
+amf_restart() { t=$(date +%s); docker restart amf >/dev/null
+  for i in $(seq 30); do docker logs --since $t amf 2>&1 | grep -q 'NF registered' && return; sleep 1; done; echo "timeout: amf"; return 1; }
 
 [ "$0" = "$BASH_SOURCE" ] || return 0  # sourced for its helpers (ntn_cap.sh)
 case $1 in
   link)
-    reset
+    reset; amf_restart
     dc up -d ntn-gnb1; wait_log ntn-gnb1 'Received NGSetupResponse'
     t0=$(date +%s); dc up -d nr-ue; ue_ip
     echo "PDU session up in $(( $(date +%s) - t0 )) s"; ping_ue 5 ;;
   connected)
-    reset; export UE_RFSIM=server GNB1_RFSIM=172.22.0.71
+    reset; amf_restart; export UE_RFSIM=server GNB1_RFSIM=172.22.0.71
     dc up -d ntn-gnb1; wait_log ntn-gnb1 'Received NGSetupResponse'
     t0=$(date +%s); dc up -d nr-ue; ue_ip; echo "PDU session up in $(( $(date +%s) - t0 )) s"
     dc up -d ntn-gnb2; wait_log ntn-gnb2 'Connection to 172.22.0.71'; echo "gNB2 on air" ;;
