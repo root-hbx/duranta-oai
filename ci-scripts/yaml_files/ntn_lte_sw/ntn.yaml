@@ -52,7 +52,7 @@ x-gnb: &gnb
       --gNBs.[0].neighbour_list.[0].nr_cellid $$CELL $$(for k in gNB_ID:$$PEER_ID nr_cellid:$$PEER_CELL physical_cellId:$$PEER_PCI
       absoluteFrequencySSB:497770 subcarrierSpacing:0 band:254 tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
       do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[0].$${k%%:*} $${k#*:}; done)
-      --MACRLCs.[0].dl_max_mcs ${MAX_MCS:-27} --MACRLCs.[0].ul_max_mcs ${MAX_MCS:-27}
+      --MACRLCs.[0].dl_max_mcs ${MAX_MCS:-27} --MACRLCs.[0].ul_max_mcs ${MAX_MCS:-27} --pdcp.drb.discard_timer ${DISCARD_TIMER:-ms300}
       --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450} $$LOG $$OPT $$EXTRA
 
 services:
