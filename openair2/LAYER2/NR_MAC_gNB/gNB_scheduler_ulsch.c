@@ -2813,8 +2813,12 @@ void nr_ulsch_preprocessor(gNB_MAC_INST *nr_mac, nr_cell_sched_t *cell, post_pro
 
   fsn_t *next = &cell->ul_next;
   while (max_dci > 0) {
-    /* go to the next UL slot, skipping DL if necessary */
-    *next = fsn_get_max(*next, min_next);
+    /* go to the next UL slot, skipping DL if necessary. A next in the past of current (the initial one) can
+     * still compare as later than min_next across the half-cycle of the frame wrap */
+    if (fsn_in_the_past(*next, current))
+      *next = min_next;
+    else
+      *next = fsn_get_max(*next, min_next);
     while (!is_ul_slot(next->s, fs))
       *next = fsn_add_delta(*next, 1);
     if (!is_dl_slot(current.s, fs)) // if current slot is not DL, nothing to do
