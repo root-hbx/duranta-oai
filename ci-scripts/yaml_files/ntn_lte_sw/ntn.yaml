@@ -1,6 +1,10 @@
 # NR NTN: one UE and two gNBs on a trace-driven LEO satellite (SAT_LEO_TRANS), against an external Open5GS 5GC.
 # Binaries come from a mounted build directory; see ntn.sh and doc/trace-based-ntn-tutorial.md.
 # Calibration (tools/ntn/calc_ntn_parameters.py) for the sample trace, UE = gNB at the mid-pass subpoint, fc 2488.4 MHz.
+# SR prohibit 32 ms (above the SR to grant round trip) and 32 SRs at most instead of the GEO 512 ms x 64: a UE the gNB
+# no longer serves (e.g., lost handover command) gives up on SR and starts a random access after about 1 s, not 33 s.
+# PRACH root sequences 1 and 40 (16 roots each for 64 preambles at Ncs 34): with a shared root, the co-channel neighbour
+# also detects the UE preambles and its RARs collide with the serving cell ones.
 x-oai: &oai
   image: ${OAI_IMG:-ntn-dev}
   privileged: true
@@ -38,11 +42,13 @@ x-gnb: &gnb
       --rfsimulator.[0].serveraddr $$RFSIM $$PROP_DELAY $$CHAN
       --gNBs.[0].gNB_ID $$GNB_ID --gNBs.[0].nr_cellid $$CELL --gNBs.[0].servingCellConfigCommon.[0].physCellId $$PCI
       --gNBs.[0].servingCellConfigCommon.[0].ssb_PositionsInBurst_Bitmap $$SSB
+      --gNBs.[0].servingCellConfigCommon.[0].prach_RootSequenceIndex $$ROOT
       --gNBs.[0].plmn_list.[0].mcc 1 --gNBs.[0].plmn_list.[0].mnc 1 --gNBs.[0].amf_ip_address.[0].ipv4 172.22.0.10
       --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NG_AMF $$IP --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NGU $$IP
       --gNBs.[0].servingCellConfigCommon.[0].ta-Common-r17 ${TA_COMMON:-1865301}
       --gNBs.[0].servingCellConfigCommon.[0].ta-CommonDrift-r17 ${TA_DRIFT:--227522}
       --gNBs.[0].servingCellConfigCommon.[0].cellSpecificKoffset_r17 ${KOFFSET:-20}
+      --gNBs.[0].TIMERS.sr_ProhibitTimer 32 --gNBs.[0].TIMERS.sr_TransMax 32 --gNBs.[0].TIMERS.sr_ProhibitTimer_v1700 0
       --gNBs.[0].servingCellConfigCommon.[0].positionX-r17 -3204120
       --gNBs.[0].servingCellConfigCommon.[0].positionY-r17 -3925660
       --gNBs.[0].servingCellConfigCommon.[0].positionZ-r17 1086297
@@ -90,6 +96,7 @@ services:
       CELL: 12345678
       PCI: ${GNB1_PCI:-0}
       SSB: ${GNB1_SSB:-1}
+      ROOT: 1
       PEER_ID: "0xe01"
       PEER_CELL: 12345679
       PEER_PCI: ${GNB2_PCI:-1}
@@ -110,6 +117,7 @@ services:
       CELL: 12345679
       PCI: ${GNB2_PCI:-1}
       SSB: ${GNB2_SSB:-2}
+      ROOT: 40
       PEER_ID: "0xe00"
       PEER_CELL: 12345678
       PEER_PCI: ${GNB1_PCI:-0}
