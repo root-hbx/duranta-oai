@@ -2,6 +2,8 @@
 # NR NTN handover stress test: N2 handovers back and forth between PCI 0 and 1 with a ping running
 #   [REGEN=1] [LOAD=dl|ul] ntn_ho_loop.sh [n]   n handovers (default 20), GAP s after each one (default 4)
 #   LOAD: iperf3 TCP during the handovers, from the UPF to the UE (dl) or reverse (ul)
+#   SEG: restart the nodes every SEG handovers (default 20), the satellite trace lasts 300 s
+#   STOP_ON_T430=1: stop at the first UE T430 expiry and leave the nodes running for inspection
 # After a failed handover the logs are kept and the UE is brought back with ntn.sh connected.
 # Output under build/pcap-ntn-hob/<trans|regen>-<time>: results.txt (one line per handover), ping.txt,
 # logs/<segment>/ and summary.txt (success rate, ping gaps, MAC timeout counts, last HARQ round stats).
@@ -21,13 +23,18 @@ logs() { seg=$((seg + 1)); mkdir -p $out/logs/$seg
   for n in nr-ue ntn-gnb1 ntn-gnb2; do docker logs $n > $out/logs/$seg/$n.log 2>&1 || true; done
   docker exec nr-ue cat /tmp/ping.txt >> $out/ping.txt 2>/dev/null || true; }
 
+t430() { [ -n "$STOP_ON_T430" ] && [ $(count nr-ue 'Timer T430 expired') -gt 0 ] || return 1
+  echo "T430 expired before handover $k, nodes left running" | tee -a $out/results.txt; logs; exit 0; }
+
 up
 for k in $(seq $N); do
+  t430 || true
+  [ $k -gt 1 ] && [ $(((k - 1) % ${SEG:-20})) = 0 ] && { logs; up; }
   t=$((1 - serving)) t0=$(date +%s.%3N) g=ntn-gnb$((t + 1)); c=$(count $g 'handover for UE .* complete')
   # OK once the target gNB has the RRCReconfigurationComplete (the UE may sync and still fail, e.g., on integrity)
   if r=$(./ntn.sh ho $t 2>&1) && wait_log_n $g 'handover for UE .* complete' $c; then serving=$t res=OK; else res=FAIL; fi
   echo "$k $t0 $(date +%s.%3N) PCI $t $res" | tee -a $out/results.txt
-  if [ $res = FAIL ]; then echo "$r" > $out/fail-$k.txt; logs; up; else sleep $GAP; fi
+  if [ $res = FAIL ]; then echo "$r" > $out/fail-$k.txt; t430 || true; logs; up; else sleep $GAP; fi
 done
 logs; LOAD= load; reset
 
