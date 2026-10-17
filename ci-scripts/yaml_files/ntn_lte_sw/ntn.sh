@@ -3,6 +3,7 @@
 #   ntn.sh link           gNB1 (rfsim server) + UE: registration and PDU session
 #   ntn.sh connected      UE (rfsim server) registers via gNB1 (PCI 0), then gNB2 (PCI 1) joins the radio
 #   ntn.sh ho <0|1>       N2 handover of the UE to PCI 0 or 1, triggered at the serving gNB
+#   HO_IF=xn ntn.sh ho ..  Xn handover instead of N2 (the gNBs set up Xn with each other)
 #   ntn.sh down
 #   REGEN=1 ntn.sh ...    regenerative satellite instead of transparent
 #   GNB2=0 ntn.sh connected   without gNB2 (no co-channel neighbour)
@@ -41,17 +42,18 @@ case $1 in
     dc up -d ntn-gnb1; wait_log ntn-gnb1 'Received NGSetupResponse'
     t0=$(date +%s); dc up -d nr-ue; ue_ip; echo "PDU session up in $(( $(date +%s) - t0 )) s"
     [ "$GNB2" = 0 ] && exit
-    dc up -d ntn-gnb2; wait_log ntn-gnb2 'Connection to 172.22.0.71'; beam 0; echo "gNB2 on air" ;;
+    dc up -d ntn-gnb2; wait_log ntn-gnb2 'Connection to 172.22.0.71'; beam 0; echo "gNB2 on air"
+    [ "$HO_IF" = xn ] && wait_log ntn-gnb1 'Xn peer .* setup complete' && echo "Xn up" ;;
   ho)
     src=ntn-gnb$(( 2 - $2 ))
     n=$(count nr-ue 'Processing reconfigurationWithSync'); m=$(count nr-ue "Initial sync successful, PCI: $2")
     # the handover happens at the beam edge, then the UE is in the target beam
-    beam edge; tn $src "ci trigger_n2_ho $2,1" | grep -i handover
+    beam edge; tn $src "ci trigger_${HO_IF:-n2}_ho $2,1" | grep -i handover
     for i in $(seq 50); do sleep 0.2; [ $(count nr-ue 'Processing reconfigurationWithSync') -gt $n ] && break; done
     for i in $(seq 100); do [ $(count nr-ue "Initial sync successful, PCI: $2") -gt $m ] && beam $2 && echo "UE synced to PCI $2" && exit; sleep 0.2; done
     echo "HO to PCI $2 FAILED"; exit 1 ;;
   ping) ping_ue $2 ;;
   tn) tn $2 "$3" ;;
   down) reset ;;
-  *) sed -n 2,10p ntn.sh; exit 1 ;;
+  *) sed -n 2,11p ntn.sh; exit 1 ;;
 esac

@@ -1,6 +1,7 @@
 #!/bin/bash
-# NR NTN handover stress test: N2 handovers back and forth between PCI 0 and 1 with a ping running
-#   [REGEN=1] [LOAD=dl|ul] ntn_ho_loop.sh [n]   n handovers (default 20), GAP s after each one (default 4)
+# NR NTN handover stress test: handovers back and forth between PCI 0 and 1 with a ping running
+#   [REGEN=1] [LOAD=dl|ul] [HO_IF=xn] ntn_ho_loop.sh [n]   n handovers (default 20), GAP s after each one (default 4)
+#   HO_IF=xn: Xn instead of N2 handovers
 #   LOAD: iperf3 TCP during the handovers, from the UPF to the UE (dl) or reverse (ul)
 #   SEG: restart the nodes every SEG handovers (default 20), the satellite trace lasts 300 s
 #   STOP_ON_T430=1: stop at the first UE T430 expiry and leave the nodes running for inspection
@@ -10,7 +11,7 @@
 source "$(dirname "$0")/ntn.sh"
 repo=$(cd ../../.. && pwd)
 mode=trans; [ -n "$REGEN" ] && mode=regen
-out=$repo/build/pcap-ntn-hob/$mode${LOAD:+-$LOAD}-$(date +%m%d-%H%M%S); mkdir -p $out
+out=$repo/build/pcap-ntn-hob/$mode${HO_IF:+-$HO_IF}${LOAD:+-$LOAD}-$(date +%m%d-%H%M%S); mkdir -p $out
 N=${1:-20} GAP=${GAP:-4} seg=0
 
 up() { for i in 1 2 3; do ./ntn.sh connected && break; echo "retry ntn.sh connected"; done

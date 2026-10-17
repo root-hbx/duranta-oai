@@ -3,6 +3,8 @@
 # Calibration (tools/ntn/calc_ntn_parameters.py) for the sample trace, UE = gNB at the mid-pass subpoint, fc 2488.4 MHz.
 # SR prohibit 32 ms (above the SR to grant round trip) and 32 SRs at most instead of the GEO 512 ms x 64: a UE the gNB
 # no longer serves (e.g., lost handover command) gives up on SR and starts a random access after about 1 s, not 33 s.
+# Xn: gNB2 sets up Xn with gNB1 when it starts, gNB1 only listens (the SCTP connect blocks the SCTP task, NGAP included,
+# as long as the peer does not exist).
 # PRACH root sequences 1 and 40 (16 roots each for 64 preambles at Ncs 34): with a shared root, the co-channel neighbour
 # also detects the UE preambles and its RARs collide with the serving cell ones.
 x-oai: &oai
@@ -59,7 +61,9 @@ x-gnb: &gnb
       absoluteFrequencySSB:497770 subcarrierSpacing:0 band:254 tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
       do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[0].$${k%%:*} $${k#*:}; done)
       --MACRLCs.[0].dl_max_mcs ${MAX_MCS:-27} --MACRLCs.[0].ul_max_mcs ${MAX_MCS:-27} --pdcp.drb.discard_timer ${DISCARD_TIMER:-ms300}
-      --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450} $$LOG $$OPT $$EXTRA
+      --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450}
+      --gNBs.[0].Xn_INTERFACE.gnb_ipv4_address_for_xnc $$IP $$XN_DIAL
+      $$LOG $$OPT $$EXTRA
 
 services:
   nr-ue:
@@ -72,6 +76,7 @@ services:
     environment:
       <<: *env
       RFSIM: ${UE_RFSIM:-172.22.0.70}
+      EXTRA: ${UE_EXTRA:-}
     command:
       - bash
       - -c
@@ -80,7 +85,7 @@ services:
         $$PROP_DELAY $$CHAN --position0.x -3310204.0 --position0.y -5006785.1 --position0.z 2157610.7
         --uicc0.imsi 001010000000001 --uicc0.key 465B5CE8B199B49FAA5F0A2EE238A6BC
         --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet
-        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG $$OPT
+        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG $$OPT $$EXTRA
 
   ntn-gnb1:
     <<: *gnb
@@ -98,6 +103,7 @@ services:
       SSB: ${GNB1_SSB:-1}
       ROOT: 1
       PEER_ID: "0xe01"
+      XN_DIAL: ""
       PEER_CELL: 12345679
       PEER_PCI: ${GNB2_PCI:-1}
       RFSIM: ${GNB1_RFSIM:-server}
@@ -119,6 +125,7 @@ services:
       SSB: ${GNB2_SSB:-2}
       ROOT: 40
       PEER_ID: "0xe00"
+      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip 172.22.0.70
       PEER_CELL: 12345678
       PEER_PCI: ${GNB1_PCI:-0}
       RFSIM: ${GNB2_RFSIM:-172.22.0.71}
