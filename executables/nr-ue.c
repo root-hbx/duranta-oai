@@ -25,6 +25,7 @@
 #include "PHY/MODULATION/nr_modulation.h"
 #include "common/utils/time_manager/time_manager.h"
 #include "log.h"
+#include "openair2/RRC/NR_UE/nr_ue_gnss.h"
 
 /*
  *  NR SLOT PROCESSING SEQUENCE
@@ -1033,6 +1034,7 @@ void *UE_thread(void *arg)
     metadata meta = {.slot =  curMsg.proc.nr_slot_rx, .frame =  curMsg.proc.frame_rx};
     UEscopeCopyWithMetadata(UE, ueTimeDomainSamples, rxp[0] - firstSymSamp, sizeof(c16_t), 1, readBlockSize, 0, &meta);
     AssertFatal(readBlockSize == tmp, "read to rf board failed %d", tmp);
+    nr_ue_gnss_set_rx_time(rx_timestamp, fp->samples_per_subframe * 1000.0);
     struct timespec current_time;
     if (clock_gettime(CLOCK_REALTIME, &current_time)) {
       LOG_E(PHY, "clock_gettime failed\n");

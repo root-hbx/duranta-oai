@@ -99,6 +99,7 @@ Here are some useful command line options for the NR UE:
 | `--freq-sync-I`          | Sets the coefficient for the Integrating part of the PI-controller for the continuous frequency offset compensation. Default value 0.001. |
 | `--num-ues`              | Run multiple UEs in one process                                                                               |
 | `--ntn-initial-time-drift` | Sets the initial NTN DL time drift (feeder link and service link), given in µs/s.                           |
+| `--ntn-gnss-utc-start` | NTN GNSS clock: UTC at rfsim time 0, in ms since 1970 (`utc_ms` of the satellite trace start, with `sat_trace_common_clock`). 0 (default): system clock. Used for the conditional handover time trigger. |
 | `--autonomous-ta`        | Enables the autonomous TA update, based on DL drift (useful if main contribution to DL drift is movement, e.g. LEO satellite). |
 | `--time-sync-P`          | Sets the coefficient for the Proportional part of the PI-controller for the time synchronization. Default value 0.5. |
 | `--time-sync-I`          | Sets the coefficient for the Integrating part of the PI-controller for the time synchronization. Default value 0.0. |

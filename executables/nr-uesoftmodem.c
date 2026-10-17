@@ -63,6 +63,7 @@ unsigned short config_frames[4] = {2,9,11,13};
 #include "executables/thread-common.h"
 
 #include "nr_nas_msg.h"
+#include "openair2/RRC/NR_UE/nr_ue_gnss.h"
 #include "actor.h"
 
 THREAD_STRUCT thread_struct;
@@ -312,6 +313,7 @@ int main(int argc, char **argv)
 
   cpuf=get_cpu_freq_GHz();
   itti_init(TASK_MAX, tasks_info);
+  nr_ue_gnss_init(nrUE_params.ntn_gnss_utc_start);
 
   init_opt();
 
