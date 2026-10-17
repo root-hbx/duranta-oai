@@ -9,9 +9,13 @@ Helpers for the trace-driven LEO satellite channel model of the rfsimulator
 | `download_tle.py` | download/filter TLEs from CelesTrak | - |
 | `generate_orbital_trace.py` | propagate one TLE (SGP4) over a pass, write the trace CSV | `numpy`, `skyfield` |
 | `calc_ntn_parameters.py` | SIB19 / UE parameters matching a trace and ground positions | - |
+| `find_handover_pair.py` | two satellites of a TLE set serving a ground position one after the other | `numpy`, `skyfield` |
+| `calc_service_windows.py` | service windows of several traces, handover window and CHO `condEventT1` / `t-Service` values | - |
 
-`data/` holds the default TLE (`default_leo600.tle`, a 600 km polar orbit) and a
-300 s sample trace (`orbital_trace_s_300.csv`, Starlink DTC pass).
+`data/` holds the default TLE (`default_leo600.tle`, a 600 km polar orbit), a
+300 s sample trace (`orbital_trace_s_300.csv`, Starlink DTC pass), and a pair of
+Starlink DTC satellites serving the same UE one after the other
+(`starlink_dtc_ho_pair.tle`, traces `ho_pair_sat0.csv` / `ho_pair_sat1.csv` from 2026-10-18T06:56:20Z).
 
 ## Trace format
 
@@ -24,6 +28,7 @@ time_s,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z
 ```
 
 - `time_s` or `time_ms`: time since trace start, strictly increasing
+- `utc_ms` (optional): UTC of the row, ms since 1970-01-01
 - `pos_*`: satellite ECEF position (m), `vel_*`: satellite ECEF velocity (m/s)
 
 ## Workflow
@@ -45,3 +50,22 @@ python3 calc_ntn_parameters.py trace.csv --ue=-2706714,-4261882,3885680 --gnb=-2
 ```
 
 `-g ms` writes a trace with 1 ms resolution (`time_ms`), `-t` is then in ms.
+
+### Two satellites, one time line (handover)
+
+```bash
+# 1. a satellite pair: A serves at the trace start, B rises 120 s later, before A sets
+python3 find_handover_pair.py --tle starlink_dtc.tle --ue=-3310204,-5006785,2157610 --min-elev 25 --overlap 40 120
+
+# 2. both traces from the same UTC start (printed by step 1), TLE indices A and B
+python3 generate_orbital_trace.py -t 360 --tle starlink_dtc.tle --sat-index <A> --start-utc <start> \
+  --gnd-position '{"x": -3310204, "y": -5006785, "z": 2157610}' -o sat0.csv
+python3 generate_orbital_trace.py -t 360 --tle starlink_dtc.tle --sat-index <B> --start-utc <start> \
+  --gnd-position '{"x": -3310204, "y": -5006785, "z": 2157610}' -o sat1.csv
+
+# 3. handover window and the CHO time trigger (condEventT1) between them
+python3 calc_service_windows.py sat0.csv sat1.csv --ue=-3310204,-5006785,2157610 --min-elev 25
+```
+
+In the rfsimulator, set `sat_trace_common_clock = 1` in the channel models of both satellites so that all links and
+nodes follow the same trace time.
