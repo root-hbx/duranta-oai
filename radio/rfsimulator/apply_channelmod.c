@@ -89,7 +89,10 @@ static void trace_link_dynamics(channel_desc_t *cd, double t, const double pos_g
 //     as in the built-in circular orbit model.
 static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSamples, uint64_t TS)
 {
-  const double t = (TS > channelDesc->start_TS ? TS - channelDesc->start_TS : 0) / channelDesc->sampling_rate;
+  uint64_t start_TS = channelDesc->start_TS;
+  if (channelDesc->sat_trace_common_clock)
+    start_TS = 0;
+  const double t = (TS > start_TS ? TS - start_TS : 0) / channelDesc->sampling_rate;
   double pos_sat[3], vel_sat[3];
   interp_sat_trace(channelDesc, t, pos_sat, vel_sat);
 

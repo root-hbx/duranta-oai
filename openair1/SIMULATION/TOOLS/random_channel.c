@@ -2395,6 +2395,7 @@ int load_channellist(uint8_t nb_tx, uint8_t nb_rx, double sampling_rate, uint64_
   int pindex_TYPE = config_paramidx_fromname(achannel_params,numparams, CHANNELMOD_MODEL_TYPE_PNAME);
   int pindex_TRACE = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_TRACE_PNAME);
   int pindex_ZOH = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_ZOH_PNAME);
+  int pindex_CLOCK = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_CLOCK_PNAME);
   const char *pos_ue_pnames[3] = {CHANNELMOD_MODEL_POS_UE_X_PNAME,
                                   CHANNELMOD_MODEL_POS_UE_Y_PNAME,
                                   CHANNELMOD_MODEL_POS_UE_Z_PNAME};
@@ -2444,6 +2445,7 @@ int load_channellist(uint8_t nb_tx, uint8_t nb_rx, double sampling_rate, uint64_
                   channeldesc_p->model_name);
       AssertFatal(load_sat_trace(channeldesc_p, trace_path) == 0, "Failed to load satellite trace %s\n", trace_path);
       channeldesc_p->sat_interp_zoh = *(channel_list.paramarray[i][pindex_ZOH].iptr) != 0;
+      channeldesc_p->sat_trace_common_clock = *(channel_list.paramarray[i][pindex_CLOCK].iptr) != 0;
       for (int k = 0; k < 3; k++) {
         channeldesc_p->pos_ue[k] = *(channel_list.paramarray[i][pindex_POS_UE[k]].dblptr);
         channeldesc_p->pos_gnb[k] = *(channel_list.paramarray[i][pindex_POS_GNB[k]].dblptr);

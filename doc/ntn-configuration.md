@@ -63,6 +63,7 @@ The trace mode is enabled per channel model with these parameters:
 | `pos_ue_x`, `pos_ue_y`, `pos_ue_z` | UE ECEF position (m) | `0, 0, 6377900` |
 | `pos_gnb_x`, `pos_gnb_y`, `pos_gnb_z` | gNB ground station ECEF position (m), `SAT_LEO_TRANS` only | `0, 0, 6377900` |
 | `sat_interp_zoh` | `0`: linear interpolation between trace samples, `1`: zero-order hold | `0` |
+| `sat_trace_common_clock` | trace time `t`: `0` since this link connected, `1` rfsim time, the same for all links and nodes (several gNBs/satellites sharing one time line) | `0` |
 
 The satellite state at time `t` after the UE connected is interpolated from the trace (held at the last sample after the
 trace end). From it, the channel model computes

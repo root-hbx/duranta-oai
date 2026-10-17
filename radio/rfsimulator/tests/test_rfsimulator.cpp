@@ -712,6 +712,17 @@ TEST_F(SatTraceTest, ZeroOrderHold)
   EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(2), cd->pos_ue) / kC * kSampleRate));
 }
 
+TEST_F(SatTraceTest, CommonClockIgnoresLinkStart)
+{
+  channel_desc_t *cd = MakeDesc(SAT_LEO_REGEN, false);
+  cd->start_TS = 5 * kSampleRate; // link connected at rfsim time 5 s
+  update_channel_model(cd, 64, 7.5 * kSampleRate);
+  EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(2.5), cd->pos_ue) / kC * kSampleRate)) << "time since link up";
+  cd->sat_trace_common_clock = true;
+  update_channel_model(cd, 64, 7.5 * kSampleRate);
+  EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(7.5), cd->pos_ue) / kC * kSampleRate)) << "rfsim time";
+}
+
 TEST_F(SatTraceTest, ClampedAfterTraceEnd)
 {
   channel_desc_t *cd = MakeDesc(SAT_LEO_REGEN, false);
