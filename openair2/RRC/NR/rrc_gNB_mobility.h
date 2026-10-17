@@ -45,6 +45,9 @@ typedef struct nr_ho_source_cu {
   ho_status_transfer_t ho_status_transfer;
   /// old (source) downlink tunnel
   gtpu_tunnel_t old_du_tunnel_config;
+  /// Xn handover: SCTP association to the target gNB (0: not Xn) and target NG-RAN node UE XnAP ID
+  sctp_assoc_t xn_assoc_id;
+  uint32_t xn_target_ue_id;
 } nr_ho_source_cu_t;
 
 /* acknowledgement of handover request. buf+len is the RRC Reconfiguration */
@@ -72,6 +75,9 @@ typedef struct nr_ho_target_cu {
   ho_success_t ho_success;
   /// function pointer to announce the handover failure
   ho_failure_t ho_failure;
+  /// Xn handover: SCTP association to the source gNB (0: not Xn) and source NG-RAN node UE XnAP ID
+  sctp_assoc_t xn_assoc_id;
+  uint32_t xn_source_ue_id;
 } nr_ho_target_cu_t;
 
 typedef struct nr_handover_context_s {
@@ -94,6 +100,16 @@ void nr_rrc_trigger_n2_ho(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, const nr_neighbou
 void rrc_gNB_trigger_reconfiguration_for_handover(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, uint8_t *rrc_reconf, int rrc_reconf_len);
 
 void nr_rrc_trigger_n2_ho_target(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue);
+byte_array_t nr_rrc_ho_target_prepare(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE);
+void nr_initiate_handover(const gNB_RRC_INST *rrc,
+                          gNB_RRC_UE_t *ue,
+                          const nr_rrc_cell_container_t *source_cell,
+                          byte_array_t *ho_prep_info,
+                          ho_req_ack_t ack,
+                          ho_success_t success,
+                          ho_cancel_t cancel,
+                          ho_failure_t failure);
+byte_array_t rrc_gNB_generate_HandoverPreparationInformation(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue);
 
 byte_array_t *get_meas_timing_config(const NR_MeasurementTimingConfiguration_t *mtc, const NR_MeasConfig_t *measConfig);
 

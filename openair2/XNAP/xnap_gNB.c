@@ -14,6 +14,7 @@
 #include "xnap_common.h"
 #include "xnap_gNB.h"
 #include "lib/xnap_gNB_interface_management.h"
+#include "lib/xnap_gNB_mobility_management.h"
 #include "xnap_gNB_itti_messaging.h"
 #include "xnap_gNB_handlers.h"
 #include "xnap_gNB_encoder.h"
@@ -181,6 +182,30 @@ static void xnap_gNB_handle_sctp_data_ind(instance_t instance, sctp_data_ind_t *
   AssertFatal(result == EXIT_SUCCESS, "Failed to free memory (%d)!\n", result);
 }
 
+/* Encode and send a UE-associated XnAP message from RRC to the peer of assoc_id */
+static void xnap_gNB_send_ue_pdu(instance_t instance, sctp_assoc_t assoc_id, XNAP_XnAP_PDU_t *pdu, const char *name)
+{
+  AssertFatal(pdu != NULL, "[gNB %ld] encoding of %s failed\n", instance, name);
+  uint8_t *buffer = NULL;
+  uint32_t length = 0;
+  int rc = xnap_gNB_encode_pdu(pdu, &buffer, &length);
+  ASN_STRUCT_FREE(asn_DEF_XNAP_XnAP_PDU, pdu);
+  AssertFatal(rc == 0, "[gNB %ld] xnap_gNB_encode_pdu() failed for %s\n", instance, name);
+
+  xnap_gnb_inst_t *inst = xnap_get_inst(instance);
+  AssertFatal(inst != NULL, "Xn instance %ld not found\n", instance);
+  xnap_peer_t *peer = xnap_get_peer_by_assoc(inst, assoc_id);
+  if (peer == NULL || peer->state != XNAP_PEER_STATE_CONNECTED) {
+    LOG_E(XNAP, "[gNB %ld] %s not sent: no connected Xn peer with assoc_id %d\n", instance, name, assoc_id);
+    free(buffer);
+    return;
+  }
+  LOG_I(XNAP, "[gNB %ld] Sending %s to gNB_id 0x%x (%u bytes)\n", instance, name, peer->remote_gnb_id, length);
+  /* UE-associated signalling on a stream other than the non-UE one, if there is one */
+  const uint16_t stream = peer->out_streams > 1 ? XNAP_NON_UE_STREAM_ID + 1 : XNAP_NON_UE_STREAM_ID;
+  xnap_gNB_itti_send_sctp_data(instance, assoc_id, buffer, length, stream);
+}
+
 void *xnap_task(void *args)
 {
   UNUSED(args);
@@ -214,6 +239,44 @@ void *xnap_task(void *args)
       case SCTP_DATA_IND:
         xnap_gNB_handle_sctp_data_ind(instance, &SCTP_DATA_IND(msg));
         break;
+
+      case XNAP_HANDOVER_REQ: {
+        xnap_handover_req_itti_t *m = &XNAP_HANDOVER_REQ(msg);
+        xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_handover_request(&m->msg), "HandoverRequest");
+        free_xnap_handover_request(&m->msg);
+      } break;
+
+      case XNAP_HANDOVER_REQ_ACK: {
+        xnap_handover_req_ack_itti_t *m = &XNAP_HANDOVER_REQ_ACK(msg);
+        xnap_gNB_send_ue_pdu(instance,
+                             m->assoc_id,
+                             encode_xnap_handover_request_acknowledge(&m->msg),
+                             "HandoverRequestAcknowledge");
+        free_xnap_handover_request_acknowledge(&m->msg);
+      } break;
+
+      case XNAP_HANDOVER_PREP_FAILURE: {
+        xnap_handover_prep_failure_itti_t *m = &XNAP_HANDOVER_PREP_FAILURE(msg);
+        xnap_gNB_send_ue_pdu(instance,
+                             m->assoc_id,
+                             encode_xnap_handover_preparation_failure(&m->msg),
+                             "HandoverPreparationFailure");
+      } break;
+
+      case XNAP_SN_STATUS_TRANSFER: {
+        xnap_sn_status_transfer_itti_t *m = &XNAP_SN_STATUS_TRANSFER(msg);
+        xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_sn_status_transfer(&m->msg), "SNStatusTransfer");
+      } break;
+
+      case XNAP_UE_CONTEXT_RELEASE: {
+        xnap_ue_context_release_itti_t *m = &XNAP_UE_CONTEXT_RELEASE(msg);
+        xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_ue_context_release(&m->msg), "UEContextRelease");
+      } break;
+
+      case XNAP_HANDOVER_CANCEL: {
+        xnap_handover_cancel_itti_t *m = &XNAP_HANDOVER_CANCEL(msg);
+        xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_handover_cancel(&m->msg), "HandoverCancel");
+      } break;
 
       default:
         LOG_E(XNAP, "Unknown message type %d (%s)\n", msgType, ITTI_MSG_NAME(msg));

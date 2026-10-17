@@ -16,6 +16,12 @@
 #define XNAP_REGISTER_GNB_REQ(mSGpTR)     (mSGpTR)->ittiMsg.xnap_register_gnb_req
 #define XNAP_SETUP_IND(mSGpTR)            (mSGpTR)->ittiMsg.xnap_setup_ind
 #define XNAP_PEER_SHUTDOWN_IND(mSGpTR)    (mSGpTR)->ittiMsg.xnap_peer_shutdown_ind
+#define XNAP_HANDOVER_REQ(mSGpTR)         (mSGpTR)->ittiMsg.xnap_handover_req
+#define XNAP_HANDOVER_REQ_ACK(mSGpTR)     (mSGpTR)->ittiMsg.xnap_handover_req_ack
+#define XNAP_HANDOVER_PREP_FAILURE(mSGpTR) (mSGpTR)->ittiMsg.xnap_handover_prep_failure
+#define XNAP_SN_STATUS_TRANSFER(mSGpTR)   (mSGpTR)->ittiMsg.xnap_sn_status_transfer
+#define XNAP_UE_CONTEXT_RELEASE(mSGpTR)   (mSGpTR)->ittiMsg.xnap_ue_context_release
+#define XNAP_HANDOVER_CANCEL(mSGpTR)      (mSGpTR)->ittiMsg.xnap_handover_cancel
 
 typedef struct {
   // PLMN Identity (M)
@@ -557,5 +563,38 @@ typedef struct {
   /* Cause (M) */
   xnap_cause_t cause;
 } xnap_retrieve_ue_context_failure_t;
+
+/* ITTI messages between RRC and XnAP: an XnAP message and the SCTP association
+ * of the peer gNB it is sent to (RRC -> XnAP) or received from (XnAP -> RRC).
+ * The receiver frees the message contents. */
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_handover_req_t msg;
+} xnap_handover_req_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_handover_req_ack_t msg;
+} xnap_handover_req_ack_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_handover_preparation_failure_t msg;
+} xnap_handover_prep_failure_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_sn_status_transfer_t msg;
+} xnap_sn_status_transfer_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_ue_context_release_t msg;
+} xnap_ue_context_release_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_handover_cancel_t msg;
+} xnap_handover_cancel_itti_t;
 
 #endif /* XNAP_MESSAGES_TYPES_H_ */

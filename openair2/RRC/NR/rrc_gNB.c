@@ -62,6 +62,8 @@
 #include "rrc_gNB_du.h"
 #include "rrc_cell_management.h"
 #include "rrc_gNB_mobility.h"
+#include "rrc_gNB_XNAP.h"
+#include "openair3/NGAP/ngap_gNB_mobility_management.h"
 #include "rrc_gNB_radio_bearers.h"
 #include "rrc_cell_management.h"
 #include "rrc_messages_types.h"
@@ -1900,8 +1902,17 @@ static void process_Event_Based_Measurement_Report(gNB_RRC_INST *rrc,
             if (neighbourCellRSRP > best_rsrp) {
               // UE can send multiple neighbour cells A3 event report in 1 Meas Report. So, we need to find the best neighbour
               best_rsrp = neighbourCellRSRP;
-              LOG_I(NR_RRC, "HO LOG: Serving Cell RSRP: %d - Best Neighbor RSRP: %d ! Trigger N2 HO\n", servingCellRSRP, best_rsrp);
-              nr_rrc_trigger_n2_ho(rrc, ue, neighbour);
+              // Xn handover if there is an Xn interface to the target gNB, N2 otherwise
+              const sctp_assoc_t xn_assoc_id = rrc_get_xn_assoc_id(rrc, neighbour->gNB_ID);
+              LOG_I(NR_RRC,
+                    "HO LOG: Serving Cell RSRP: %d - Best Neighbor RSRP: %d ! Trigger %s HO\n",
+                    servingCellRSRP,
+                    best_rsrp,
+                    xn_assoc_id ? "Xn" : "N2");
+              if (xn_assoc_id)
+                nr_rrc_trigger_xn_ho(rrc, ue, neighbour, xn_assoc_id);
+              else
+                nr_rrc_trigger_n2_ho(rrc, ue, neighbour);
             }
             LOG_D(NR_RRC, "HO LOG: Trigger N2 HO for the neighbour gnb: %u cell: %lu\n", neighbour->gNB_ID, neighbour->nrcell_id);
           }
@@ -2957,6 +2968,8 @@ static void rrc_CU_process_ue_context_release_complete(MessageDef *msg_p)
      * operation (i.e, handover) */
     rrc_gNB_send_NGAP_UE_CONTEXT_RELEASE_COMPLETE(0, UE->rrc_ue_id, &UE->pduSessions);
     rrc_remove_ue(RC.nrrrc[0], ue_context_p);
+  } else if (UE->xn_release) {
+    rrc_remove_ue(RC.nrrrc[0], ue_context_p);
   }
 }
 
@@ -3926,6 +3939,11 @@ void *rrc_gnb_task(void *args_p)
         rrc_gNB_process_NGAP_DL_RAN_STATUS_TRANSFER(msg_p, instance);
         break;
 
+      case NGAP_PATH_SWITCH_REQ_ACK:
+        rrc_gNB_process_path_switch_req_ack(RC.nrrrc[instance], &NGAP_PATH_SWITCH_REQ_ACK(msg_p));
+        free_ng_path_switch_req_ack(&NGAP_PATH_SWITCH_REQ_ACK(msg_p));
+        break;
+
       /* Messages from F1AP task */
       case F1AP_SETUP_REQ:
         AssertFatal(!NODE_IS_DU(RC.nrrrc[instance]->node_type), "should not receive F1AP_SETUP_REQUEST in DU!\n");
@@ -4115,6 +4133,15 @@ void *rrc_gnb_task(void *args_p)
 
       case XNAP_PEER_SHUTDOWN_IND:
         rrc_remove_xn_candidate(RC.nrrrc[instance], XNAP_PEER_SHUTDOWN_IND(msg_p).gnb_id);
+        break;
+
+      case XNAP_HANDOVER_REQ:
+      case XNAP_HANDOVER_REQ_ACK:
+      case XNAP_HANDOVER_PREP_FAILURE:
+      case XNAP_SN_STATUS_TRANSFER:
+      case XNAP_UE_CONTEXT_RELEASE:
+      case XNAP_HANDOVER_CANCEL:
+        rrc_gNB_process_xnap_message(RC.nrrrc[instance], msg_p);
         break;
 
       default:

@@ -733,6 +733,29 @@ NGAP_NGAP_PDU_t *encode_ng_ul_ran_status_transfer(const ngap_ran_status_transfer
   return pdu;
 }
 
+/** @brief Encode a Last Visited NG-RAN Cell Information (9.3.1.97 3GPP TS 38.413), as carried
+ * in other protocols, e.g., the UE History Information of the XnAP Handover Request */
+byte_array_t encode_ng_last_visited_ngran_cell(const last_visited_ngran_cell_info_t *info)
+{
+  NGAP_LastVisitedNGRANCellInformation_t cell = {0};
+  cell.cellType.cellSize = info->type;
+  cell.globalCellID.present = NGAP_NGRAN_CGI_PR_nR_CGI;
+  asn1cCalloc(cell.globalCellID.choice.nR_CGI, cgi);
+  encode_ngap_nr_cgi(cgi, &info->id.plmn_identity, info->id.nrCellIdentity);
+  if (info->cause) {
+    asn1cCalloc(cell.hOCauseValue, cause);
+    encode_ngap_cause(cause, info->cause);
+  }
+  cell.timeUEStayedInCell = info->time_in_cell;
+
+  byte_array_t out = {0};
+  ssize_t len = aper_encode_to_new_buffer(&asn_DEF_NGAP_LastVisitedNGRANCellInformation, NULL, &cell, (void **)&out.buf);
+  ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_NGAP_LastVisitedNGRANCellInformation, &cell);
+  AssertFatal(len > 0, "Last Visited NG-RAN Cell Information encoding failed\n");
+  out.len = len;
+  return out;
+}
+
 /** @brief Encode NGAP Path Switch Request (9.2.3.8 3GPP TS 38.413) NG-RAN node -> AMF */
 NGAP_NGAP_PDU_t *encode_ng_path_switch_request(const ngap_path_switch_req_t *msg)
 {

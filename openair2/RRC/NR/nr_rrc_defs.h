@@ -203,6 +203,11 @@ typedef struct gNB_RRC_UE_s {
   uint8_t kgnb[32];
   uint8_t nh[32];
   int8_t  nh_ncc;
+  /* unused {NH, NCC} pair from the AMF (Path Switch Request Acknowledge),
+   * for the vertical key derivation at the next Xn handover (TS 33.501 6.9.2.3.2) */
+  bool nh_next_valid;
+  uint8_t nh_next[32];
+  int8_t ncc_next;
 
   /* Used integrity/ciphering algorithms */
   NR_CipheringAlgorithm_t            ciphering_algorithm;
@@ -249,6 +254,10 @@ typedef struct gNB_RRC_UE_s {
   uint32_t                           ue_reconfiguration_counter;
   bool ongoing_reconfiguration;
   bool an_release; // flag if core requested UE release
+  bool xn_release; // flag if the Xn handover target requested UE release
+  /* Xn handover source of this UE (target gNB), released after the Path Switch */
+  sctp_assoc_t xn_source_assoc_id;
+  uint32_t xn_source_ue_id;
 
   /* NGUEContextSetup might come with PDU sessions, but setup needs to be
    * delayed after security (and capability); PDU sessions are stored here */

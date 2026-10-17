@@ -23,6 +23,7 @@
 #include "openair2/LAYER2/NR_MAC_gNB/mac_proto.h"
 #include "openair2/LAYER2/NR_MAC_gNB/mac_config.h"
 #include "openair2/RRC/NR/rrc_gNB_mobility.h"
+#include "openair2/RRC/NR/rrc_gNB_XNAP.h"
 #include "openair3/NGAP/ngap_gNB_ue_context.h"
 #include "openair2/RRC/NR/rrc_gNB_du.h"
 #define TELNETSERVERCODE
@@ -237,6 +238,46 @@ int rrc_gNB_trigger_n2_ho(char *buf, int debug, telnet_printfunc_t prnt)
   return 0;
 }
 
+/** @brief Trigger Xn handover for UE, as rrc_gNB_trigger_n2_ho() */
+int rrc_gNB_trigger_xn_ho(char *buf, int debug, telnet_printfunc_t prnt)
+{
+  UNUSED(debug);
+  if (!RC.nrrrc)
+    ERROR_MSG_RET("no RRC present, cannot list counts\n");
+
+  if (!buf) {
+    ERROR_MSG_RET("Please provide neighbour cell id and ue id\n");
+  } else {
+    // Parse neighbour cell PCI
+    char *token = strtok(buf, ",");
+    if (!token) {
+      ERROR_MSG_RET("Invalid input. Expected format: Neighbour PCI, ueId\n");
+    }
+    uint32_t neighbour_pci = strtol(token, NULL, 10);
+
+    // Parse ueId
+    token = strtok(NULL, ",");
+    if (!token) {
+      ERROR_MSG_RET("Missing UE ID\n");
+    }
+    uint32_t ueId = strtol(token, NULL, 10);
+
+    // Retrieve UE context
+    rrc_gNB_ue_context_t *ue_p = rrc_gNB_get_ue_context(RC.nrrrc[0], ueId);
+    if (!ue_p) {
+      ERROR_MSG_RET("UE with id %u not found\n", ueId);
+    }
+    gNB_RRC_UE_t *UE = &ue_p->ue_context;
+
+    // Trigger Xn handover
+    nr_HO_Xn_trigger_telnet(RC.nrrrc[0], neighbour_pci, UE->rrc_ue_id);
+
+    // Print success message
+    prnt("RRC Xn handover triggered for UE %u with neighbour cell id %u\n", ueId, neighbour_pci);
+  }
+  return 0;
+}
+
 int force_ul_failure(char *buf, int debug, telnet_printfunc_t prnt)
 {
   UNUSED(debug);
@@ -413,6 +454,7 @@ static telnetshell_cmddef_t cicmds[] = {
     {"get_current_bwp", "[rnti(hex,opt)]", get_current_bwp},
     {"trigger_bwp_switch", "newBWPId [rnti(hex,opt)]", trigger_bwp_switch},
     {"trigger_n2_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_n2_ho},
+    {"trigger_xn_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_xn_ho},
     {"set_pusch_target_snr", "[somelongSNR(dec)]", set_pusch_target_snr},
     {"pdu_session_release", "[gNB_ue_ngap_id(int,opt)]", trigger_ngap_pdu_session_release},
     {"", "", NULL},
