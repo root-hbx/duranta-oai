@@ -105,6 +105,8 @@ typedef struct nr_ho_target_cu {
   uint32_t xn_source_ue_id;
   /// conditional handover: the UE may access much later, or never (cancelled by the source)
   bool cho;
+  /// time-based CHO: the condEventT1 window of the UE, from the source (NULL: none)
+  f1ap_cho_time_window_t *cho_window;
 } nr_ho_target_cu_t;
 
 typedef struct nr_handover_context_s {

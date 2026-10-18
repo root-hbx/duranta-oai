@@ -42,6 +42,10 @@ bool nr_update_sib19(const gnb_sat_position_update_t *sat_position)
   sib19_update_count++;
   return true;
 }
+void nr_register_ntn_ta_predictor(nr_ntn_ta_predictor_t predictor)
+{
+  (void)predictor;
+}
 void update_channel_model(channel_desc_t *channelDesc, int nbSamples, uint64_t TS);
 }
 

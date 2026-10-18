@@ -99,8 +99,10 @@ static void free_ho_ctx(nr_handover_context_t *ho_ctx)
       free_byte_array(ho_ctx->source->cho_cand[i].rrc_reconfig);
   }
   free(ho_ctx->source);
-  if (ho_ctx->target)
+  if (ho_ctx->target) {
     FREE_AND_ZERO_BYTE_ARRAY(ho_ctx->target->ue_ho_prep_info);
+    free(ho_ctx->target->cho_window);
+  }
   free(ho_ctx->target);
   free(ho_ctx);
 }

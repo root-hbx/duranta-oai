@@ -363,6 +363,17 @@ XNAP_XnAP_PDU_t *encode_xnap_handover_request(const xnap_handover_req_t *req)
     if (req->cho_info->estimated_arrival_probability) {
       asn1cCallocOne(cho->cHO_EstimatedArrivalProbability, *req->cho_info->estimated_arrival_probability);
     }
+    if (req->cho_info->time_based) {
+      XNAP_ProtocolExtensionContainer_8902P69_t *ext = calloc_or_fail(1, sizeof(*ext));
+      asn1cSequenceAdd(ext->list, XNAP_CHOinformation_Req_ExtIEs_t, tb_ie);
+      tb_ie->id = XNAP_ProtocolIE_ID_id_CHOTimeBasedInformation;
+      tb_ie->criticality = XNAP_Criticality_reject;
+      tb_ie->extensionValue.present = XNAP_CHOinformation_Req_ExtIEs__extensionValue_PR_CHOTimeBasedInformation;
+      XNAP_CHOTimeBasedInformation_t *tb = &tb_ie->extensionValue.choice.CHOTimeBasedInformation;
+      asn_uint642INTEGER(&tb->cHO_HOWindowStart, req->cho_info->time_based->start);
+      tb->cHO_HOWindowDuration = req->cho_info->time_based->duration;
+      cho->iE_Extensions = (struct XNAP_ProtocolExtensionContainer *)ext;
+    }
   }
 
   /* UE History Information (M) */
@@ -484,6 +495,19 @@ bool decode_xnap_handover_request(xnap_handover_req_t *out, const XNAP_XnAP_PDU_
         if (cho->cHO_EstimatedArrivalProbability) {
           out->cho_info->estimated_arrival_probability = malloc_or_fail(sizeof(*out->cho_info->estimated_arrival_probability));
           *out->cho_info->estimated_arrival_probability = *cho->cHO_EstimatedArrivalProbability;
+        }
+        const XNAP_ProtocolExtensionContainer_8902P69_t *ext =
+            (const XNAP_ProtocolExtensionContainer_8902P69_t *)cho->iE_Extensions;
+        for (int j = 0; ext && j < ext->list.count; j++) {
+          const XNAP_CHOinformation_Req_ExtIEs_t *e = ext->list.array[j];
+          if (e->id != XNAP_ProtocolIE_ID_id_CHOTimeBasedInformation)
+            continue;
+          _EQ_CHECK_INT(e->extensionValue.present, XNAP_CHOinformation_Req_ExtIEs__extensionValue_PR_CHOTimeBasedInformation);
+          const XNAP_CHOTimeBasedInformation_t *tb = &e->extensionValue.choice.CHOTimeBasedInformation;
+          out->cho_info->time_based = calloc_or_fail(1, sizeof(*out->cho_info->time_based));
+          if (asn_INTEGER2uint64(&tb->cHO_HOWindowStart, &out->cho_info->time_based->start) != 0)
+            return false;
+          out->cho_info->time_based->duration = tb->cHO_HOWindowDuration;
         }
       } break;
 
@@ -630,6 +654,11 @@ bool eq_xnap_handover_request(const xnap_handover_req_t *a, const xnap_handover_
     _EQ_CHECK_INT(!a->cho_info->estimated_arrival_probability, !b->cho_info->estimated_arrival_probability);
     if (a->cho_info->estimated_arrival_probability)
       _EQ_CHECK_INT(*a->cho_info->estimated_arrival_probability, *b->cho_info->estimated_arrival_probability);
+    _EQ_CHECK_INT(!a->cho_info->time_based, !b->cho_info->time_based);
+    if (a->cho_info->time_based) {
+      _EQ_CHECK_UINT64(a->cho_info->time_based->start, b->cho_info->time_based->start);
+      _EQ_CHECK_INT(a->cho_info->time_based->duration, b->cho_info->time_based->duration);
+    }
   }
 
   return true;
@@ -712,6 +741,7 @@ void free_xnap_handover_request(xnap_handover_req_t *msg)
   if (msg->cho_info) {
     free(msg->cho_info->t_ng_node_ue_xnap_id);
     free(msg->cho_info->estimated_arrival_probability);
+    free(msg->cho_info->time_based);
     free(msg->cho_info);
   }
 }

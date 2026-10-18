@@ -226,6 +226,13 @@ static bool send_xn_handover_request(gNB_RRC_INST *rrc,
   if (cho) {
     req->cho_info = calloc_or_fail(1, sizeof(*req->cho_info));
     req->cho_info->trigger = XNAP_CHO_INITIATION;
+    // 38.300 16.14.3.2.2: the source may signal the time-based trigger to the target
+    const nr_cho_configuration_t *cfg = &rrc->cho_configuration;
+    if (cfg->t1_threshold) {
+      req->cho_info->time_based = calloc_or_fail(1, sizeof(*req->cho_info->time_based));
+      req->cho_info->time_based->start = cfg->t1_threshold;
+      req->cho_info->time_based->duration = cfg->t1_duration;
+    }
   }
 
   xnap_ue_context_info_t *ctx = &req->ue_context;
@@ -811,6 +818,11 @@ static void rrc_gNB_process_xn_handover_request(gNB_RRC_INST *rrc, const xnap_ha
   target->xn_assoc_id = assoc_id;
   target->xn_source_ue_id = req->s_ng_node_ue_xnap_id;
   target->cho = req->cho_info != NULL;
+  if (req->cho_info && req->cho_info->time_based) {
+    target->cho_window = malloc_or_fail(sizeof(*target->cho_window));
+    target->cho_window->start = req->cho_info->time_based->start;
+    target->cho_window->duration = req->cho_info->time_based->duration;
+  }
   target->ue_ho_prep_info = copy_byte_array(ctx->rrc_context);
 
   UE->amf_ue_ngap_id = ctx->ngc_ue_sig_ref;

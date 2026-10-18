@@ -1100,24 +1100,22 @@ bool nr_mac_configure_other_sib(nr_cell_sched_t *cell, int num_cu_sib, const f1a
   return true;
 }
 
-static void nr_update_sib19_cell(nr_cell_sched_t *cell, const gnb_sat_position_update_t *sat_position)
+static void set_ntn_config(NR_NTN_Config_r17_t *ntn_cfg, const gnb_sat_position_update_t *sat_position)
 {
-  NR_COMMON_channels_t *cc = &cell->common_channels;
-  NR_ServingCellConfigCommon_t *scc = cc->ServingCellConfigCommon;
   const vector_t *pos = &sat_position->position;
   const vector_t *vel = &sat_position->velocity;
 
-  if (!scc->ext2->ntn_Config_r17->epochTime_r17)
-    scc->ext2->ntn_Config_r17->epochTime_r17 = calloc(1, sizeof(*scc->ext2->ntn_Config_r17->epochTime_r17));
+  if (!ntn_cfg->epochTime_r17)
+    ntn_cfg->epochTime_r17 = calloc(1, sizeof(*ntn_cfg->epochTime_r17));
 
-  NR_EpochTime_r17_t *epoch_time_r17 = scc->ext2->ntn_Config_r17->epochTime_r17;
+  NR_EpochTime_r17_t *epoch_time_r17 = ntn_cfg->epochTime_r17;
   epoch_time_r17->sfn_r17 = sat_position->sfn;
   epoch_time_r17->subFrameNR_r17 = sat_position->subframe;
 
-  if (!scc->ext2->ntn_Config_r17->ta_Info_r17)
-    scc->ext2->ntn_Config_r17->ta_Info_r17 = calloc(1, sizeof(*scc->ext2->ntn_Config_r17->ta_Info_r17));
+  if (!ntn_cfg->ta_Info_r17)
+    ntn_cfg->ta_Info_r17 = calloc(1, sizeof(*ntn_cfg->ta_Info_r17));
 
-  NR_TA_Info_r17_t *sib19_ta_info = scc->ext2->ntn_Config_r17->ta_Info_r17;
+  NR_TA_Info_r17_t *sib19_ta_info = ntn_cfg->ta_Info_r17;
 
   // SIB19 provides Round trip delay on feeder link (between gNB and SAT).
   sib19_ta_info->ta_Common_r17 = sat_position->delay;
@@ -1137,21 +1135,21 @@ static void nr_update_sib19_cell(nr_cell_sched_t *cell, const gnb_sat_position_u
     free_and_zero(sib19_ta_info->ta_CommonDriftVariant_r17);
 
   // Currently PositionVelocity is supported and not yet the OrbitalParams
-  if (!scc->ext2->ntn_Config_r17->ephemerisInfo_r17) {
-    scc->ext2->ntn_Config_r17->ephemerisInfo_r17 = calloc(1, sizeof(*scc->ext2->ntn_Config_r17->ephemerisInfo_r17));
-    scc->ext2->ntn_Config_r17->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_NOTHING;
+  if (!ntn_cfg->ephemerisInfo_r17) {
+    ntn_cfg->ephemerisInfo_r17 = calloc(1, sizeof(*ntn_cfg->ephemerisInfo_r17));
+    ntn_cfg->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_NOTHING;
   }
-  if (scc->ext2->ntn_Config_r17->ephemerisInfo_r17->present == NR_EphemerisInfo_r17_PR_orbital_r17) {
-    ASN_STRUCT_FREE(asn_DEF_NR_Orbital_r17, scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.orbital_r17);
-    scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.orbital_r17 = NULL;
-    scc->ext2->ntn_Config_r17->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_NOTHING;
+  if (ntn_cfg->ephemerisInfo_r17->present == NR_EphemerisInfo_r17_PR_orbital_r17) {
+    ASN_STRUCT_FREE(asn_DEF_NR_Orbital_r17, ntn_cfg->ephemerisInfo_r17->choice.orbital_r17);
+    ntn_cfg->ephemerisInfo_r17->choice.orbital_r17 = NULL;
+    ntn_cfg->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_NOTHING;
   }
-  if (!scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.positionVelocity_r17)
-    scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.positionVelocity_r17 =
-        calloc(1, sizeof(*scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.positionVelocity_r17));
+  if (!ntn_cfg->ephemerisInfo_r17->choice.positionVelocity_r17)
+    ntn_cfg->ephemerisInfo_r17->choice.positionVelocity_r17 =
+        calloc(1, sizeof(*ntn_cfg->ephemerisInfo_r17->choice.positionVelocity_r17));
 
-  scc->ext2->ntn_Config_r17->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_positionVelocity_r17;
-  NR_PositionVelocity_r17_t *sib19_PosVel = scc->ext2->ntn_Config_r17->ephemerisInfo_r17->choice.positionVelocity_r17;
+  ntn_cfg->ephemerisInfo_r17->present = NR_EphemerisInfo_r17_PR_positionVelocity_r17;
+  NR_PositionVelocity_r17_t *sib19_PosVel = ntn_cfg->ephemerisInfo_r17->choice.positionVelocity_r17;
 
   sib19_PosVel->positionX_r17 = pos->X;
   sib19_PosVel->positionY_r17 = pos->Y;
@@ -1159,6 +1157,12 @@ static void nr_update_sib19_cell(nr_cell_sched_t *cell, const gnb_sat_position_u
   sib19_PosVel->velocityVX_r17 = vel->X;
   sib19_PosVel->velocityVY_r17 = vel->Y;
   sib19_PosVel->velocityVZ_r17 = vel->Z;
+}
+
+static void nr_update_sib19_cell(nr_cell_sched_t *cell, const gnb_sat_position_update_t *sat_position)
+{
+  NR_COMMON_channels_t *cc = &cell->common_channels;
+  set_ntn_config(cc->ServingCellConfigCommon->ext2->ntn_Config_r17, sat_position);
 
   NR_SystemInformation_IEs_t *sysInfov17 = calloc(1, sizeof(*sysInfov17)); // for othersibs
   struct NR_SystemInformation_IEs__sib_TypeAndInfo__Member *type_du = calloc(1, sizeof(*type_du));
@@ -1199,6 +1203,58 @@ bool nr_update_sib19(const gnb_sat_position_update_t *sat_position)
   }
   NR_SCHED_UNLOCK(&nrmac->sched_lock);
   return updated;
+}
+
+static nr_ntn_ta_predictor_t ntn_ta_predictor;
+
+void nr_register_ntn_ta_predictor(nr_ntn_ta_predictor_t predictor)
+{
+  ntn_ta_predictor = predictor;
+}
+
+/* Dedicated ntn-Config of a time-based CHO candidate cell. The UE executes the CHO in the condEventT1 window, which
+ * may start long after it received the configuration, and the epochTime of a target cell is the SFN nearest to that
+ * reception (38.331 EpochTime): the epoch cannot move into the window. Instead, fit the Common TA over the window and
+ * extend ntn-UlSyncValidityDuration to cover it. */
+void nr_mac_ntn_config_for_cho_window(NR_NTN_Config_r17_t *ntn_cfg, const f1ap_cho_time_window_t *window)
+{
+  if (!ntn_ta_predictor) {
+    LOG_W(NR_MAC, "time-based CHO: no Common TA prediction available, ntn-Config valid around the epoch only\n");
+    return;
+  }
+  const uint64_t unix_1900_ms = 2208988800000ULL;
+  if (window->start * 10 < unix_1900_ms)
+    return;
+  const uint64_t start_ms = window->start * 10 - unix_1900_ms;
+  const uint64_t end_ms = start_ms + window->duration * 100;
+  gnb_sat_position_update_t pred;
+  uint64_t epoch_ms;
+  if (!ntn_ta_predictor(start_ms, end_ms, &pred, &epoch_ms) || end_ms <= epoch_ms) {
+    LOG_W(NR_MAC, "time-based CHO: no Common TA prediction for the window, ntn-Config valid around the epoch only\n");
+    return;
+  }
+  set_ntn_config(ntn_cfg, &pred);
+
+  // validity from the epoch to the end of the window, plus time to read the SIB19 of the target cell
+  const int validity_s[] = {5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 120, 180, 240, 900};
+  const int n_validity = sizeofArray(validity_s);
+  const double needed_s = (end_ms - epoch_ms) / 1000.0 + 10;
+  int idx = 0;
+  while (idx < n_validity - 1 && validity_s[idx] < needed_s)
+    idx++;
+  if (!ntn_cfg->ntn_UlSyncValidityDuration_r17)
+    ntn_cfg->ntn_UlSyncValidityDuration_r17 = calloc_or_fail(1, sizeof(*ntn_cfg->ntn_UlSyncValidityDuration_r17));
+  if (*ntn_cfg->ntn_UlSyncValidityDuration_r17 < idx)
+    *ntn_cfg->ntn_UlSyncValidityDuration_r17 = idx;
+  LOG_I(NR_MAC,
+        "time-based CHO window %.1f-%.1f s after the epoch (SFN %d): ta-Common %u, drift %d, drift variant %u, validity %d s\n",
+        (start_ms - (double)epoch_ms) / 1000,
+        (end_ms - (double)epoch_ms) / 1000,
+        pred.sfn,
+        pred.delay,
+        pred.drift,
+        pred.accel,
+        validity_s[*ntn_cfg->ntn_UlSyncValidityDuration_r17]);
 }
 
 bool nr_trigger_bwp_switch(uint16_t rnti, int bwp_id)

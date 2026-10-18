@@ -326,6 +326,13 @@ typedef struct {
   uint32_t *t_ng_node_ue_xnap_id;
   // Estimated Arrival Probability (O), 1..100
   uint8_t *estimated_arrival_probability;
+  // Conditional Handover Time Based Information (O, Rel-18, NTN): the condEventT1 of the UE
+  struct {
+    // Handover Window Start: t1-Threshold, in 10 ms since 1900-01-01 UTC
+    uint64_t start;
+    // Handover Window Duration: duration of condEventT1, in 100 ms, 1..6000
+    uint16_t duration;
+  } *time_based;
 } xnap_cho_info_req_t;
 
 /* 3GPP TS 38.423 9.1.1.2 – Conditional Handover Information Acknowledge */

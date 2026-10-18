@@ -4333,6 +4333,10 @@ void rrc_f1_ue_context_setup_for_target_du(const gNB_RRC_INST *rrc,
   req.drbs = drbs;
   req.cu_to_du_rrc_info.meas_config = meas_config;
   req.cu_to_du_rrc_info.ho_prep_info = hpi;
+  if (ho_prep_info && ue->ho_context && ue->ho_context->target && ue->ho_context->target->cho_window) {
+    req.cho_time_window = malloc_or_fail(sizeof(*req.cho_time_window));
+    *req.cho_time_window = *ue->ho_context->target->cho_window;
+  }
 
   RETURN_IF_INVALID_ASSOC_ID(cell->assoc_id);
   rrc->mac_rrc.ue_context_setup_request(cell->assoc_id, &req);

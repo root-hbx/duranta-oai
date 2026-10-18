@@ -180,10 +180,13 @@ set(xnap_source
     XNAP_CellsinAoI-Item.c
     XNAP_CellToReport.c
     XNAP_CellToReport-Item.c
+    XNAP_CHO-HandoverWindowDuration.c
+    XNAP_CHO-HandoverWindowStart.c
     XNAP_CHOinformation-Ack.c
     XNAP_CHOinformation-Req.c
     XNAP_CHO-MRDC-Indicator.c
     XNAP_CHO-Probability.c
+    XNAP_CHOTimeBasedInformation.c
     XNAP_CHOtrigger.c
     XNAP_CNTypeRestrictionsForEquivalent.c
     XNAP_CNTypeRestrictionsForEquivalentItem.c
@@ -1017,10 +1020,13 @@ set(xnap_headers
     XNAP_CellsinAoI-Item.h
     XNAP_CellToReport.h
     XNAP_CellToReport-Item.h
+    XNAP_CHO-HandoverWindowDuration.h
+    XNAP_CHO-HandoverWindowStart.h
     XNAP_CHOinformation-Ack.h
     XNAP_CHOinformation-Req.h
     XNAP_CHO-MRDC-Indicator.h
     XNAP_CHO-Probability.h
+    XNAP_CHOTimeBasedInformation.h
     XNAP_CHOtrigger.h
     XNAP_CNTypeRestrictionsForEquivalent.h
     XNAP_CNTypeRestrictionsForEquivalentItem.h
