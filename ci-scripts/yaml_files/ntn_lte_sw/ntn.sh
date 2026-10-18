@@ -6,13 +6,26 @@
 #   HO_IF=xn ntn.sh ho ..  Xn handover instead of N2 (the gNBs set up Xn with each other)
 #   ntn.sh down
 #   REGEN=1 ntn.sh ...    regenerative satellite instead of transparent
+#   TWO_SAT=1 ntn.sh ...  gNB1 and gNB2 on two satellites (tools/ntn/data/ho_pair_sat0/1.csv, handover window 120-182 s),
+#                         one trace clock from the UE start; without it both on the sample trace
 #   GNB2=0 ntn.sh connected   without gNB2 (no co-channel neighbour)
 #   NBR_ATT=<dB> ntn.sh ...    the other cell is NBR_ATT dB weaker (default 20), both equal during a handover
 #   ntn.sh ping [n]       ping the core network from the UE
 #   ntn.sh tn <node> <cmd>  telnet command to a softmodem
 set -e
 cd "$(dirname "$0")"
-[ -n "$REGEN" ] && export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 KOFFSET=${KOFFSET:-10} PROP_DELAY=4 UE_FO=56634 UE_DRIFT=-23 UE_FO_COMP=3
+if [ -n "$TWO_SAT" ]; then
+  # tools/ntn/calc_ntn_parameters.py for ho_pair_sat0.csv (gNB1 serves at the start)
+  export SAT_TRACE1=ho_pair_sat0.csv SAT_TRACE2=ho_pair_sat1.csv UE_FO=52230 UE_GNSS="--ntn-gnss-utc-start 1792306580000"
+  export SAT_CLOCK=$(for k in 0 1 2; do echo --channelmod.modellist_rfsimu_1.[$k].sat_trace_common_clock 1; done)
+  if [ -n "$REGEN" ]; then
+    export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 KOFFSET=${KOFFSET:-14} PROP_DELAY=3 UE_DRIFT=-21 UE_FO_COMP=3
+  else
+    export TA_COMMON=1208136 TA_DRIFT=-209614 KOFFSET=${KOFFSET:-27} PROP_DELAY=5 UE_DRIFT=-42
+  fi
+elif [ -n "$REGEN" ]; then
+  export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 KOFFSET=${KOFFSET:-10} PROP_DELAY=4 UE_FO=56634 UE_DRIFT=-23 UE_FO_COMP=3
+fi
 dc() { docker compose -p ntn_sw -f ntn.yaml "$@"; }
 tn() { docker exec $1 bash -c "exec 3<>/dev/tcp/127.0.0.1/9090; echo '$2' >&3; timeout ${3:-1} cat <&3" | tr -d '\r'; }
 count() { docker logs $1 2>&1 | grep -c "$2" || true; }
@@ -23,9 +36,10 @@ reset() { dc down 2>/dev/null; docker rm -f nr-ue ntn-gnb1 ntn-gnb2 >/dev/null 2
 # beam <0|1|edge>: UE in the beam of PCI 0 or 1, the other cell NBR_ATT dB weaker both ways, or at the beam edge (both 0 dB)
 # UE channel models 1/2 are gNB1/gNB2, gNB model 0 is the UE
 # one telnet client at a time per softmodem (concurrent ones crash it), the softmodems in parallel
-beam() { local a=-${NBR_ATT:-20} g1=0 g2=0; if [ $1 = 0 ]; then g2=$a; elif [ $1 = 1 ]; then g1=$a; fi
-  ploss() { tn $1 "channelmod modify $2 ploss $3" 0.2 >/dev/null; }
-  { ploss nr-ue 1 $g1; ploss nr-ue 2 $g2; } & ploss ntn-gnb1 0 $g1 & ploss ntn-gnb2 0 $g2 & wait; }
+beam() { local a=-${NBR_ATT:-20} g1=0 g2=0; if [ $1 = 0 ]; then g2=$a; elif [ $1 = 1 ]; then g1=$a; fi; gains $g1 $g2; }
+# gains <dB of gNB1> <dB of gNB2>
+gains() { ploss() { tn $1 "channelmod modify $2 ploss $3" 0.2 >/dev/null; }
+  { ploss nr-ue 1 $1; ploss nr-ue 2 $2; } & ploss ntn-gnb1 0 $1 & ploss ntn-gnb2 0 $2 & wait; }
 # a fresh AMF per run: after a failed handover it may keep the old gNB association and refuse the new gNB2
 amf_restart() { t=$(date +%s); docker restart amf >/dev/null
   for i in $(seq 30); do docker logs --since $t amf 2>&1 | grep -q 'NF registered' && return; sleep 1; done; echo "timeout: amf"; return 1; }
@@ -55,5 +69,5 @@ case $1 in
   ping) ping_ue $2 ;;
   tn) tn $2 "$3" ;;
   down) reset ;;
-  *) sed -n 2,11p ntn.sh; exit 1 ;;
+  *) sed -n 2,13p ntn.sh; exit 1 ;;
 esac

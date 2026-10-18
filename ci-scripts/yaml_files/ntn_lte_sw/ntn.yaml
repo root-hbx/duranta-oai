@@ -19,20 +19,21 @@ x-oai: &oai
     OPT: ${OPT:-}
     PROP_DELAY: --rfsimulator.[0].prop_delay ${PROP_DELAY:-8}
     CHAN: >-
-      --channelmod.modellist_rfsimu_1.[0].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[0].sat_trace_file /oai-ran/tools/ntn/data/orbital_trace_s_300.csv
+      --channelmod.modellist_rfsimu_1.[0].type ${SAT:-SAT_LEO_TRANS}
       --channelmod.modellist_rfsimu_1.[0].pos_ue_x -3310204.0 --channelmod.modellist_rfsimu_1.[0].pos_ue_y -5006785.1
       --channelmod.modellist_rfsimu_1.[0].pos_ue_z 2157610.7 --channelmod.modellist_rfsimu_1.[0].pos_gnb_x -3310204.0
       --channelmod.modellist_rfsimu_1.[0].pos_gnb_y -5006785.1 --channelmod.modellist_rfsimu_1.[0].pos_gnb_z 2157610.7
-      --channelmod.modellist_rfsimu_1.[1].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[1].sat_trace_file /oai-ran/tools/ntn/data/orbital_trace_s_300.csv
+      --channelmod.modellist_rfsimu_1.[1].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[1].sat_trace_file /oai-ran/tools/ntn/data/${SAT_TRACE1:-orbital_trace_s_300.csv}
       --channelmod.modellist_rfsimu_1.[1].pos_ue_x -3310204.0 --channelmod.modellist_rfsimu_1.[1].pos_ue_y -5006785.1
       --channelmod.modellist_rfsimu_1.[1].pos_ue_z 2157610.7 --channelmod.modellist_rfsimu_1.[1].pos_gnb_x -3310204.0
       --channelmod.modellist_rfsimu_1.[1].pos_gnb_y -5006785.1 --channelmod.modellist_rfsimu_1.[1].pos_gnb_z 2157610.7
       --channelmod.modellist_rfsimu_1.[2].model_name rfsimu_channel_ue1 
       --channelmod.modellist_rfsimu_1.[2].noise_power_dB -100
-      --channelmod.modellist_rfsimu_1.[2].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[2].sat_trace_file /oai-ran/tools/ntn/data/orbital_trace_s_300.csv
+      --channelmod.modellist_rfsimu_1.[2].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[2].sat_trace_file /oai-ran/tools/ntn/data/${SAT_TRACE2:-orbital_trace_s_300.csv}
       --channelmod.modellist_rfsimu_1.[2].pos_ue_x -3310204.0 --channelmod.modellist_rfsimu_1.[2].pos_ue_y -5006785.1
       --channelmod.modellist_rfsimu_1.[2].pos_ue_z 2157610.7 --channelmod.modellist_rfsimu_1.[2].pos_gnb_x -3310204.0
       --channelmod.modellist_rfsimu_1.[2].pos_gnb_y -5006785.1 --channelmod.modellist_rfsimu_1.[2].pos_gnb_z 2157610.7
+      ${SAT_CLOCK:-}
 
 x-gnb: &gnb
   <<: *oai
@@ -41,7 +42,7 @@ x-gnb: &gnb
     - -c
     - >-
       exec /build/nr-softmodem -O $$CONF/gnb.sa.band254.u0.25prb.rfsim.ntn-leo.conf --rfsim
-      --rfsimulator.[0].serveraddr $$RFSIM $$PROP_DELAY $$CHAN
+      --rfsimulator.[0].serveraddr $$RFSIM $$PROP_DELAY $$CHAN --channelmod.modellist_rfsimu_1.[0].sat_trace_file $$TRACE0
       --gNBs.[0].gNB_ID $$GNB_ID --gNBs.[0].nr_cellid $$CELL --gNBs.[0].servingCellConfigCommon.[0].physCellId $$PCI
       --gNBs.[0].servingCellConfigCommon.[0].ssb_PositionsInBurst_Bitmap $$SSB
       --gNBs.[0].servingCellConfigCommon.[0].prach_RootSequenceIndex $$ROOT
@@ -77,16 +78,17 @@ services:
     environment:
       <<: *env
       RFSIM: ${UE_RFSIM:-172.22.0.70}
+      TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE1:-orbital_trace_s_300.csv}
       EXTRA: ${UE_EXTRA:-}
     command:
       - bash
       - -c
       - >-
         exec /build/nr-uesoftmodem -O $$CONF/nrue.uicc.ntn-leo.conf --rfsim --rfsimulator.[0].serveraddr $$RFSIM
-        $$PROP_DELAY $$CHAN --position0.x -3310204.0 --position0.y -5006785.1 --position0.z 2157610.7
+        $$PROP_DELAY $$CHAN --channelmod.modellist_rfsimu_1.[0].sat_trace_file $$TRACE0 --position0.x -3310204.0 --position0.y -5006785.1 --position0.z 2157610.7
         --uicc0.imsi 001010000000001 --uicc0.key 465B5CE8B199B49FAA5F0A2EE238A6BC
         --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet
-        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} $$LOG $$OPT $$EXTRA
+        --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} --cont-fo-comp ${UE_FO_COMP:-2} ${UE_GNSS:-} $$LOG $$OPT $$EXTRA
 
   ntn-gnb1:
     <<: *gnb
@@ -108,6 +110,7 @@ services:
       PEER_CELL: 12345679
       PEER_PCI: ${GNB2_PCI:-1}
       RFSIM: ${GNB1_RFSIM:-server}
+      TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE1:-orbital_trace_s_300.csv}
       EXTRA: ${GNB1_EXTRA:-}
 
   ntn-gnb2:
@@ -130,6 +133,7 @@ services:
       PEER_CELL: 12345678
       PEER_PCI: ${GNB1_PCI:-0}
       RFSIM: ${GNB2_RFSIM:-172.22.0.71}
+      TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE2:-orbital_trace_s_300.csv}
       EXTRA: ${GNB2_EXTRA:-}
 
 networks:

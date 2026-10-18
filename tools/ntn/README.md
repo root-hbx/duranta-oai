@@ -69,3 +69,5 @@ python3 calc_service_windows.py sat0.csv sat1.csv --ue=-3310204,-5006785,2157610
 
 In the rfsimulator, set `sat_trace_common_clock = 1` in the channel models of both satellites so that all links and
 nodes follow the same trace time.
+`ci-scripts/yaml_files/ntn_lte_sw/ntn.sh` runs this pair with `TWO_SAT=1`, and `ntn_cho_loop.sh` the conditional
+handover between them.
