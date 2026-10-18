@@ -278,6 +278,11 @@ void *xnap_task(void *args)
         xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_handover_cancel(&m->msg), "HandoverCancel");
       } break;
 
+      case XNAP_HANDOVER_SUCCESS: {
+        xnap_handover_success_itti_t *m = &XNAP_HANDOVER_SUCCESS(msg);
+        xnap_gNB_send_ue_pdu(instance, m->assoc_id, encode_xnap_handover_success(&m->msg), "HandoverSuccess");
+      } break;
+
       default:
         LOG_E(XNAP, "Unknown message type %d (%s)\n", msgType, ITTI_MSG_NAME(msg));
         break;

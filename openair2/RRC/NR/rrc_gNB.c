@@ -1648,7 +1648,12 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   const nr_rrc_cell_container_t *source_cell = source_ctx ? source_ctx->cell : NULL;
   bool ho_reestab_on_source = source_cell ? cell->info.cell_id == source_cell->info.cell_id : false;
 
-  if (ho_reestab_on_source) {
+  if (ho_reestab_on_source && source_ctx->cho) {
+    // the UE stayed in the source cell: cancel the conditional handover candidates (5.3.7: the UE removed them)
+    LOG_W(NR_RRC, "UE %d: re-establishment with conditional handover prepared, cancel it\n", UE->rrc_ue_id);
+    source_ctx->ho_cancel(rrc, UE);
+    nr_rrc_finalize_ho(UE);
+  } else if (ho_reestab_on_source) {
     /* the UE came back on the source DU while doing handover, release at
      * target DU and and update the association to the initial DU one */
     LOG_W(NR_RRC, "handover for UE %d/RNTI %04x failed, rollback to original cell\n", UE->rrc_ue_id, UE->rnti);
@@ -2311,9 +2316,9 @@ static void handle_rrcReconfigurationComplete(gNB_RRC_INST *rrc, gNB_RRC_UE_t *U
     }
   }
 
-  if (UE->ho_context != NULL) {
+  // at a conditional handover source, the UE completes the CHO configuration and stays
+  if (UE->ho_context != NULL && UE->ho_context->target != NULL) {
     LOG_A(NR_RRC, "handover for UE %d/RNTI %04x complete!\n", UE->rrc_ue_id, UE->rnti);
-    DevAssert(UE->ho_context->target != NULL);
 
     UE->ho_context->target->ho_success(rrc, UE);
     nr_rrc_finalize_ho(UE);
@@ -2674,7 +2679,7 @@ void e1_send_bearer_updates(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, int n, f1ap_drb
 }
 
 /** @brief Request PDCP status from CU-UP during inter-CU handover */
-static void e1_request_pdcp_status(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
+void e1_request_pdcp_status(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
 {
   if (!is_cuup_associated(rrc))
     return;
@@ -2871,6 +2876,24 @@ static void rrc_CU_process_ue_context_release_request(MessageDef *msg_p, sctp_as
   if (UE->ho_context != NULL) {
     nr_ho_source_cu_t *source_ctx = UE->ho_context->source;
     bool from_source_du = source_ctx && source_ctx->cell->assoc_id == assoc_id;
+    if (from_source_du && source_ctx->cho) {
+      /* conditional handover prepared: the UE lost at the source DU may be executing it, keep the
+       * handover context until Handover Success or a re-establishment */
+      LOG_W(NR_RRC,
+            "UE %d: release request from source cell PCI %d with conditional handover prepared\n",
+            UE->rrc_ue_id,
+            source_ctx->cell->info.pci);
+      f1ap_ue_context_rel_cmd_t cmd = {
+          .gNB_CU_ue_id = UE->rrc_ue_id,
+          .gNB_DU_ue_id = cu_get_f1_ue_data(UE->rrc_ue_id).secondary_ue,
+          .cause = F1AP_CAUSE_RADIO_NETWORK,
+          .cause_value = 5, // 5 = F1AP_CauseRadioNetwork_interaction_with_other_procedure
+      };
+      if (!source_ctx->du_released)
+        rrc->mac_rrc.ue_context_release_command(assoc_id, &cmd);
+      source_ctx->du_released = true;
+      return;
+    }
     if (from_source_du) {
       // we received release request from the source DU, but HO is still
       // ongoing; free the UE, and remove the HO context.
@@ -2990,7 +3013,8 @@ static void rrc_CU_process_ue_context_modification_response(MessageDef *msg_p, i
   if (UE->nrdc && rrc_gnb_nrdc_wait_for_scg_failure_context_modification_response(UE))
     return nrdc_scg_failure_context_modification_response(UE, rrc, resp);
 
-  bool is_inter_cu_ho = UE->ho_context && UE->ho_context->source && !UE->ho_context->target;
+  // conditional handover: the PDCP status is requested at HANDOVER SUCCESS, not after the CHO configuration
+  bool is_inter_cu_ho = UE->ho_context && UE->ho_context->source && !UE->ho_context->target && !UE->ho_context->source->cho;
   if (resp->drbs_len > 0) { // DRB to setup
     store_du_f1u_tunnel(resp->drbs, resp->drbs_len, UE);
     e1_send_bearer_updates(rrc, UE, resp->drbs_len, resp->drbs);
@@ -4141,6 +4165,7 @@ void *rrc_gnb_task(void *args_p)
       case XNAP_SN_STATUS_TRANSFER:
       case XNAP_UE_CONTEXT_RELEASE:
       case XNAP_HANDOVER_CANCEL:
+      case XNAP_HANDOVER_SUCCESS:
         rrc_gNB_process_xnap_message(RC.nrrrc[instance], msg_p);
         break;
 

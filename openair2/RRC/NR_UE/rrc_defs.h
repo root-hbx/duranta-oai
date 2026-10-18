@@ -299,6 +299,13 @@ typedef struct NR_UE_RRC_INST_s {
   bool process_target_ntncfg;
   nr_var_cond_reconfig_t cond_reconfig;
   nr_ho_source_t ho_source;
+  // HFN and frame of the reception of the reconfiguration with sync being applied, the reference of the
+  // target cell epochTime (the stored condRRCReconfig of a conditional handover was received earlier)
+  int reconf_rx_hfn;
+  int reconf_rx_frame;
+  bool reconf_rx_valid;
+  int target_epoch_ref_hfn;
+  int target_epoch_ref_frame;
   notifiedFIFO_t *mac_input_nf;
   /* NAS PDU deferred until UL-DCCH exists: consumed in RRCSetupComplete/RRCResumeComplete dedicatedNAS-Message */
   as_nas_info_t pending_initial_nas;

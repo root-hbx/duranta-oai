@@ -16,3 +16,4 @@ MESSAGE_DEF(XNAP_HANDOVER_PREP_FAILURE, MESSAGE_PRIORITY_MED, xnap_handover_prep
 MESSAGE_DEF(XNAP_SN_STATUS_TRANSFER,    MESSAGE_PRIORITY_MED, xnap_sn_status_transfer_itti_t,    xnap_sn_status_transfer)
 MESSAGE_DEF(XNAP_UE_CONTEXT_RELEASE,    MESSAGE_PRIORITY_MED, xnap_ue_context_release_itti_t,    xnap_ue_context_release)
 MESSAGE_DEF(XNAP_HANDOVER_CANCEL,       MESSAGE_PRIORITY_MED, xnap_handover_cancel_itti_t,       xnap_handover_cancel)
+MESSAGE_DEF(XNAP_HANDOVER_SUCCESS,      MESSAGE_PRIORITY_MED, xnap_handover_success_itti_t,      xnap_handover_success)

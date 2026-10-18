@@ -24,6 +24,23 @@ typedef int (*ho_status_transfer_t)(gNB_RRC_INST *rrc,
                                     const int *drb_ids,
                                     const e1_pdcp_status_info_t *pdcp_status);
 
+/* conditional handover (CHO) candidate cell prepared by the source, TS 38.300 9.2.3.4 */
+#define NR_MAX_CHO_CANDIDATES 8 // maxNrofCondCells-r16
+typedef enum { CHO_CAND_PREPARING, CHO_CAND_PREPARED, CHO_CAND_FAILED } nr_cho_cand_state_t;
+typedef struct {
+  nr_cho_cand_state_t state;
+  nr_neighbour_cell_t cell;
+  /// Xn association to the candidate gNB and its UE XnAP ID
+  sctp_assoc_t xn_assoc_id;
+  uint32_t xn_target_ue_id;
+  /// condReconfigId, and the measIds of its execution condition
+  long cond_reconfig_id;
+  long meas_id[2];
+  int num_meas_id;
+  /// condRRCReconfig: the RRCReconfiguration of the candidate's Handover Command
+  byte_array_t rrc_reconfig;
+} nr_cho_candidate_t;
+
 typedef struct nr_ho_source_cu {
   /// pointer to the (source) cell container
   const nr_rrc_cell_container_t *cell;
@@ -48,6 +65,14 @@ typedef struct nr_ho_source_cu {
   /// Xn handover: SCTP association to the target gNB (0: not Xn) and target NG-RAN node UE XnAP ID
   sctp_assoc_t xn_assoc_id;
   uint32_t xn_target_ue_id;
+  /// conditional handover: candidate cells; once executed, xn_assoc_id/xn_target_ue_id are the ones of the
+  /// candidate the UE accessed
+  bool cho;
+  bool cho_config_sent;
+  int num_cho;
+  nr_cho_candidate_t cho_cand[NR_MAX_CHO_CANDIDATES];
+  /// the source DU released the UE (CHO: the UE left without handover command at the DU)
+  bool du_released;
 } nr_ho_source_cu_t;
 
 /* acknowledgement of handover request. buf+len is the RRC Reconfiguration */
@@ -78,6 +103,8 @@ typedef struct nr_ho_target_cu {
   /// Xn handover: SCTP association to the source gNB (0: not Xn) and source NG-RAN node UE XnAP ID
   sctp_assoc_t xn_assoc_id;
   uint32_t xn_source_ue_id;
+  /// conditional handover: the UE may access much later, or never (cancelled by the source)
+  bool cho;
 } nr_ho_target_cu_t;
 
 typedef struct nr_handover_context_s {

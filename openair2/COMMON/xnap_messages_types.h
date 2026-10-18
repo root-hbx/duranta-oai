@@ -22,6 +22,7 @@
 #define XNAP_SN_STATUS_TRANSFER(mSGpTR)   (mSGpTR)->ittiMsg.xnap_sn_status_transfer
 #define XNAP_UE_CONTEXT_RELEASE(mSGpTR)   (mSGpTR)->ittiMsg.xnap_ue_context_release
 #define XNAP_HANDOVER_CANCEL(mSGpTR)      (mSGpTR)->ittiMsg.xnap_handover_cancel
+#define XNAP_HANDOVER_SUCCESS(mSGpTR) (mSGpTR)->ittiMsg.xnap_handover_success
 
 typedef struct {
   // PLMN Identity (M)
@@ -315,6 +316,26 @@ typedef struct {
   byte_array_t last_visited_cell_info;
 } ue_history_info_t;
 
+/* 3GPP TS 38.423 9.1.1.1 – Conditional Handover Information Request */
+typedef enum { XNAP_CHO_INITIATION = 0, XNAP_CHO_REPLACE = 1 } xnap_cho_trigger_t;
+
+typedef struct {
+  // CHO Trigger (M)
+  xnap_cho_trigger_t trigger;
+  // Target NG-RAN node UE XnAP ID (C-ifCHOmod), of the CHO to replace
+  uint32_t *t_ng_node_ue_xnap_id;
+  // Estimated Arrival Probability (O), 1..100
+  uint8_t *estimated_arrival_probability;
+} xnap_cho_info_req_t;
+
+/* 3GPP TS 38.423 9.1.1.2 – Conditional Handover Information Acknowledge */
+typedef struct {
+  // Requested Target Cell ID (M)
+  xnap_ngran_cgi_t requested_target_cgi;
+  // Maximum Number of CHO Preparations (O), 1..8
+  uint8_t *max_cho_preparations;
+} xnap_cho_info_ack_t;
+
 /* 3GPP TS 38.423 9.1.1.1 – Handover Request */
 typedef struct {
   // Source NG-RAN node UE XnAP ID reference (M)
@@ -330,6 +351,8 @@ typedef struct {
   // UE History Information (M)
   uint8_t num_last_visited_cells;
   ue_history_info_t *ue_history_info;
+  // Conditional Handover Information Request (O)
+  xnap_cho_info_req_t *cho_info;
 } xnap_handover_req_t;
 
 /* QoS Flows Admitted Item */
@@ -359,6 +382,8 @@ typedef struct {
   // Target NG-RAN node To Source NG-RAN node Transparent Container (M)
   // (3GPP TS 38.331 11.2.2 HandoverCommand message )
   byte_array_t target2source;
+  // Conditional Handover Information Acknowledge (O), for a conditional handover
+  xnap_cho_info_ack_t *cho_info;
 } xnap_handover_req_ack_t;
 
 /* 3GPP TS 38.423 9.1.1.3 – Handover Preparation Failure */
@@ -596,5 +621,10 @@ typedef struct {
   sctp_assoc_t assoc_id;
   xnap_handover_cancel_t msg;
 } xnap_handover_cancel_itti_t;
+
+typedef struct {
+  sctp_assoc_t assoc_id;
+  xnap_handover_success_t msg;
+} xnap_handover_success_itti_t;
 
 #endif /* XNAP_MESSAGES_TYPES_H_ */

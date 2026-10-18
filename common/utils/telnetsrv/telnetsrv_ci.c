@@ -238,6 +238,28 @@ int rrc_gNB_trigger_n2_ho(char *buf, int debug, telnet_printfunc_t prnt)
   return 0;
 }
 
+/** @brief Trigger a conditional handover for UE
+ *  @param buf: RRC UE ID, then the PCIs of the candidate cells */
+int rrc_gNB_trigger_cho(char *buf, int debug, telnet_printfunc_t prnt)
+{
+  UNUSED(debug);
+  if (!RC.nrrrc)
+    ERROR_MSG_RET("no RRC present\n");
+  if (!buf)
+    ERROR_MSG_RET("Please provide the UE ID and the candidate cell PCIs\n");
+  char *token = strtok(buf, ",");
+  uint32_t ue_id = strtol(token, NULL, 10);
+  uint32_t pci[8];
+  int n = 0;
+  while ((token = strtok(NULL, ",")) && n < 8)
+    pci[n++] = strtol(token, NULL, 10);
+  if (n == 0)
+    ERROR_MSG_RET("Missing candidate cell PCI\n");
+  nr_HO_Xn_CHO_trigger_telnet(RC.nrrrc[0], pci, n, ue_id);
+  prnt("RRC conditional handover triggered for UE %u with %d candidate cell(s)\n", ue_id, n);
+  return 0;
+}
+
 /** @brief Trigger Xn handover for UE, as rrc_gNB_trigger_n2_ho() */
 int rrc_gNB_trigger_xn_ho(char *buf, int debug, telnet_printfunc_t prnt)
 {
@@ -455,6 +477,7 @@ static telnetshell_cmddef_t cicmds[] = {
     {"trigger_bwp_switch", "newBWPId [rnti(hex,opt)]", trigger_bwp_switch},
     {"trigger_n2_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_n2_ho},
     {"trigger_xn_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_xn_ho},
+    {"trigger_cho", "[ueId(uint32_t),candidate_pci(uint32_t)...]", rrc_gNB_trigger_cho},
     {"set_pusch_target_snr", "[somelongSNR(dec)]", set_pusch_target_snr},
     {"pdu_session_release", "[gNB_ue_ngap_id(int,opt)]", trigger_ngap_pdu_session_release},
     {"", "", NULL},

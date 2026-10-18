@@ -408,6 +408,24 @@ typedef enum {
 #define GNB_CONFIG_FREQUENCY_Q_RXLEVMIN_IDX 6
 #define GNB_CONFIG_FREQUENCY_T_RESEL_NR_IDX 7
 
+/* Conditional handover (CHO) execution conditions, TS 38.331 CondTriggerConfig */
+#define GNB_CONFIG_STRING_CHO_CONFIGURATION "nr_cho_configuration"
+// clang-format off
+#define CHO_PARAMS_DESC                                                                                                              \
+  {                                                                                                                                  \
+    {"t1_threshold", "condEventT1 t1-Threshold, UTC in 10 ms since 1900, 0: no T1", 0, .u64ptr = NULL, .defint64val = 0, TYPE_UINT64, 0}, \
+    {"t1_duration", "condEventT1 duration, 100 ms", 0, .i64ptr = NULL, .defint64val = 600, TYPE_INT64, 0},                           \
+    {"a3_offset", "condEventA3 a3-Offset, 0.5 dB", 0, .i64ptr = NULL, .defint64val = 6, TYPE_INT64, 0},                             \
+    {"a3_hysteresis", "condEventA3 hysteresis, 0.5 dB", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0},                        \
+    {"a3_time_to_trigger", "condEventA3 timeToTrigger (TimeToTrigger index)", 0, .i64ptr = NULL, .defint64val = 7, TYPE_INT64, 0}, \
+  }
+// clang-format on
+#define CHO_T1_THRESHOLD_IDX 0
+#define CHO_T1_DURATION_IDX 1
+#define CHO_A3_OFFSET_IDX 2
+#define CHO_A3_HYSTERESIS_IDX 3
+#define CHO_A3_TTT_IDX 4
+
 /* New Measurement Configurations*/
 
 #define GNB_CONFIG_STRING_MEASUREMENT_CONFIGURATION "nr_measurement_configuration"

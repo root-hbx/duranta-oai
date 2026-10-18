@@ -358,6 +358,8 @@ static void configure_ntn_ta(fapi_nr_ntn_config_t *ntn_ta,
     ntn_ta->epoch_hfn = hfn + 1;
   ntn_ta->epoch_sfn = epoch_time_r17->sfn_r17;
   ntn_ta->epoch_subframe = epoch_time_r17->subFrameNR_r17;
+  ntn_ta->epoch_ref_hfn = hfn;
+  ntn_ta->epoch_ref_frame = frame;
 
   // handle cellSpecificKoffset_r17
   if (ntn_Config_r17->cellSpecificKoffset_r17)

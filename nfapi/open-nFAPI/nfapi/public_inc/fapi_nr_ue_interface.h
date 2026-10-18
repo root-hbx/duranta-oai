@@ -564,6 +564,9 @@ typedef struct {
   int epoch_hfn;
   int epoch_sfn;
   int epoch_subframe;
+  // target cell: HFN and frame of the reception of the epoch time, the reference of its SFN
+  int epoch_ref_hfn;
+  int epoch_ref_frame;
 
   // orbital angular velocity in rad/ms
   double omega;

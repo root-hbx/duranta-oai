@@ -2265,6 +2265,19 @@ static void fill_neighbour_cell_configuration(const uint8_t gnb_idx, gNB_RRC_INS
   sort_neighbour_configuration(rrc);
 }
 
+static void fill_cho_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
+{
+  char path[MAX_OPTNAME_SIZE + 8];
+  snprintf(path, sizeof(path), "%s.[%i].%s", GNB_CONFIG_STRING_GNB_LIST, gnb_idx, GNB_CONFIG_STRING_CHO_CONFIGURATION);
+  GET_PARAMS(cho_params, CHO_PARAMS_DESC, path);
+  nr_cho_configuration_t *cho = &rrc->cho_configuration;
+  cho->t1_threshold = *cho_params[CHO_T1_THRESHOLD_IDX].u64ptr;
+  cho->t1_duration = *cho_params[CHO_T1_DURATION_IDX].i64ptr;
+  cho->a3_offset = *cho_params[CHO_A3_OFFSET_IDX].i64ptr;
+  cho->a3_hysteresis = *cho_params[CHO_A3_HYSTERESIS_IDX].i64ptr;
+  cho->a3_time_to_trigger = *cho_params[CHO_A3_TTT_IDX].i64ptr;
+}
+
 static void fill_measurement_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
 {
   char measurement_path[MAX_OPTNAME_SIZE + 8];
@@ -2457,6 +2470,7 @@ gNB_RRC_INST *RCconfig_NRRRC()
         fill_neighbour_cell_configuration(k, rrc);
 
         fill_measurement_configuration(k, rrc);
+        fill_cho_configuration(k, rrc);
 
         rrc->SIBs = fill_cu_sibs(GNBParamList.paramarray[i]);
 

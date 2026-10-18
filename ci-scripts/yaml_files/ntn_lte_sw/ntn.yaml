@@ -50,6 +50,7 @@ x-gnb: &gnb
       --gNBs.[0].servingCellConfigCommon.[0].ta-Common-r17 ${TA_COMMON:-1865301}
       --gNBs.[0].servingCellConfigCommon.[0].ta-CommonDrift-r17 ${TA_DRIFT:--227522}
       --gNBs.[0].servingCellConfigCommon.[0].cellSpecificKoffset_r17 ${KOFFSET:-20}
+      --gNBs.[0].servingCellConfigCommon.[0].ntn-UlSyncValidityDuration-r17 ${NTN_VALIDITY:-5}
       --gNBs.[0].TIMERS.sr_ProhibitTimer 32 --gNBs.[0].TIMERS.sr_TransMax 32 --gNBs.[0].TIMERS.sr_ProhibitTimer_v1700 0
       --gNBs.[0].servingCellConfigCommon.[0].positionX-r17 -3204120
       --gNBs.[0].servingCellConfigCommon.[0].positionY-r17 -3925660

@@ -270,6 +270,7 @@ void apply_ntn_config(PHY_VARS_NR_UE *UE,
                       bool *ntn_targetcell);
 void fix_ntn_epoch_hfn(PHY_VARS_NR_UE *UE, int hfn, int frame);
 void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int abs_subframe_tx);
+void apply_ntn_doppler_target_cell(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int abs_subframe);
 void dump_nrdlsch(PHY_VARS_NR_UE *ue,uint8_t gNB_id,uint8_t nr_slot_rx,unsigned int *coded_bits_per_codeword,int round,  unsigned char harq_pid);
 void nr_a_sum_b(c16_t *input_x, c16_t *input_y, unsigned short nb_rb);
 

@@ -291,6 +291,16 @@ static int xnap_gNB_handle_handover_cancel(instance_t instance,
   XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_CANCEL, decode_xnap_handover_cancel);
 }
 
+static int xnap_gNB_handle_handover_success(instance_t instance,
+                                            sctp_assoc_t assoc_id,
+                                            uint32_t stream,
+                                            xnap_gnb_inst_t *inst,
+                                            xnap_peer_t *peer,
+                                            XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_SUCCESS, decode_xnap_handover_success);
+}
+
 /* Callback table
  * Indexed by [procedureCode][direction-1]
  * where direction is:  0 = initiatingMessage, 1 = successfulOutcome, 2 = unsuccessfulOutcome
@@ -328,7 +338,7 @@ static const xnap_message_decoded_callback xnap_messages_callback[][3] = {
     {0, 0, 0}, /* 26 secondaryRATDataUsageReport */
     {0, 0, 0}, /* 27 deactivateTrace */
     {0, 0, 0}, /* 28 traceStart */
-    {0, 0, 0}, /* 29 handoverSuccess */
+    {xnap_gNB_handle_handover_success, 0, 0}, /* 29 handoverSuccess */
     {0, 0, 0}, /* 30 conditionalHandoverCancel */
     {0, 0, 0}, /* 31 earlyStatusTransfer */
     {0, 0, 0}, /* 32 failureIndication */

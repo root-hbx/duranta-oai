@@ -262,7 +262,14 @@ static void nr_rrc_process_ntnconfig(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *S
 {
   SI_info->SInfo_r17.sib19_validity = true;
   // Check if Epochtime is sent or not
-  int diff_frames = eval_epoch_time(SI_info, ntncfg, frame, is_targetcell);
+  int diff_frames = 0;
+  if (is_targetcell) {
+    // epoch relative to the reception of the reconfiguration, then to now
+    diff_frames = eval_epoch_time(SI_info, ntncfg, rrc->target_epoch_ref_frame, true);
+    diff_frames -= (rrc->current_hfn - rrc->target_epoch_ref_hfn) * 1024 + frame - rrc->target_epoch_ref_frame;
+  } else {
+    diff_frames = eval_epoch_time(SI_info, ntncfg, frame, false);
+  }
 
   if (ntncfg->ntn_UlSyncValidityDuration_r17) { // ulsyncvalidity duration configured
     int val430_ms = 0, sib19_timer_ms = 0;
@@ -1048,6 +1055,8 @@ static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
     rrc->target_ntncfg = NULL;
     rrc->process_target_ntncfg = false;
   }
+  rrc->target_epoch_ref_hfn = rrc->reconf_rx_valid ? rrc->reconf_rx_hfn : rrc->current_hfn;
+  rrc->target_epoch_ref_frame = rrc->reconf_rx_valid ? rrc->reconf_rx_frame : rrc->current_frame;
   if (reconfigurationWithSync->spCellConfigCommon &&
       reconfigurationWithSync->spCellConfigCommon->ext2 &&
       reconfigurationWithSync->spCellConfigCommon->ext2->ntn_Config_r17) {
@@ -1154,8 +1163,8 @@ static bool nr_rrc_ue_process_masterCellGroup(NR_UE_RRC_INST_t *rrc,
   nr_mac_rrc_config_cg_t *mac_msg = &rrc_msg.payload.config_cg;
   mac_msg->cellGroupConfig = cellGroupConfig;
   mac_msg->UE_NR_Capability = rrc->UECap.UE_NR_Capability;
-  mac_msg->hfn = rrc->current_hfn;
-  mac_msg->frame = rrc->current_frame;
+  mac_msg->hfn = rrc->reconf_rx_valid ? rrc->reconf_rx_hfn : rrc->current_hfn;
+  mac_msg->frame = rrc->reconf_rx_valid ? rrc->reconf_rx_frame : rrc->current_frame;
   nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
   return true;
 }
@@ -3804,7 +3813,11 @@ void nr_rrc_cho_tick(NR_UE_RRC_INST_t *rrc, int step_ms)
     return;
   }
   // its reconfigurationWithSync removes VarConditionalReconfig (5.3.5.5.2), rec is a copy
+  rrc->reconf_rx_valid = true;
+  rrc->reconf_rx_hfn = c->rx_hfn;
+  rrc->reconf_rx_frame = c->rx_frame;
   nr_rrc_ue_process_rrcReconfiguration(rrc, 0, rec);
+  rrc->reconf_rx_valid = false;
   nr_rrc_ue_generate_RRCReconfigurationComplete(rrc, 1, rec->rrc_TransactionIdentifier);
   ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rec);
 }

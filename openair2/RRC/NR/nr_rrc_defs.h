@@ -329,6 +329,15 @@ typedef struct {
   bool is_default_a3_configuration_exists;
 } nr_measurement_configuration_t;
 
+/* Execution conditions of the conditional handovers (CHO) prepared by this gNB as source (TS 38.331 CondTriggerConfig) */
+typedef struct {
+  uint64_t t1_threshold; // condEventT1 t1-Threshold: UTC in 10 ms since 1900, 0: no T1 condition
+  long t1_duration; // condEventT1 duration in 100 ms
+  long a3_offset; // condEventA3 a3-Offset in 0.5 dB
+  long a3_hysteresis; // condEventA3 hysteresis in 0.5 dB
+  long a3_time_to_trigger; // condEventA3 timeToTrigger, TimeToTrigger
+} nr_cho_configuration_t;
+
 /** @brief Per-neighbor cell-specific offsets (TS 38.331), shared by SIB3 and SIB4
  * Maps to ASN.1 IntraFreqNeighCellInfo and InterFreqNeighCellInfo
  * (SIB3.IntraFreqNeighCellList, SIB4.InterFreqCarrierFreqInfo.neighCellList) */
@@ -675,6 +684,7 @@ typedef struct gNB_RRC_INST_s {
   // Per-cell neighbour configurations, indexed by cell_id
   seq_arr_t *neighbour_cell_configuration;
   nr_measurement_configuration_t measurementConfiguration;
+  nr_cho_configuration_t cho_configuration;
 
   RB_HEAD(rrc_du_tree, nr_rrc_du_container_t) dus; // DUs, indexed by assoc_id
   size_t num_dus;

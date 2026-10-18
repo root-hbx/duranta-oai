@@ -455,7 +455,7 @@ static uint64_t get_carrier_frequency(const int N_RB, const int mu, const uint32
   return carrier_freq;
 }
 
-static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE)
+static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE, int abs_subframe)
 {
   NR_DL_FRAME_PARMS *fp = &UE->frame_parms;
   // Start synchronization with a target gNB
@@ -500,7 +500,7 @@ static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE)
 
     // Apply Doppler based on NTN-Config for target cell
     if (UE->nrUE_config.ntn_config.is_targetcell)
-      apply_ntn_timing_advance_and_doppler(UE, fp, -1);
+      apply_ntn_doppler_target_cell(UE, fp, abs_subframe);
     // Apply NTN DL Doppler as initial FO
     UE->initial_fo = UE->dl_Doppler_shift;
 
@@ -885,7 +885,7 @@ void *UE_thread(void *arg)
         process_msg_rcc_to_mac(NotifiedFifoData(elt), UE->Mod_id);
         delNotifiedFIFO_elt(elt);
       }
-      handle_sync_req_from_mac(UE);
+      handle_sync_req_from_mac(UE, absolute_slot / fp->slots_per_subframe);
       // seed the out-of-sync tick once from the last known synchronized frame/hfn:
       // absolute_slot doesn't advance while out of sync, so failed sync attempts must not re-seed
       if (!out_of_sync_rrc_tick_seeded) {
@@ -978,7 +978,7 @@ void *UE_thread(void *arg)
     }
 
     /* check if MAC has sent sync request */
-    if (handle_sync_req_from_mac(UE) == 0)
+    if (handle_sync_req_from_mac(UE, absolute_slot / fp->slots_per_subframe) == 0)
       continue;
 
     // start of normal case, the UE is in sync

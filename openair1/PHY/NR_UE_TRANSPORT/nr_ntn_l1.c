@@ -4,31 +4,44 @@
 
 #include "PHY/NR_UE_TRANSPORT/nr_transport_proto_ue.h"
 
+/* target cell: the epoch SFN is the one nearest to the frame in which the message with the epoch time was
+ * received (TS 38.331 NTN-Config epochTime), e.g., much earlier for a conditional handover */
+static int get_target_epoch_hfn(const fapi_nr_ntn_config_t *cfg)
+{
+  const int ref_frame = cfg->epoch_ref_frame;
+  const int diff1 = (ref_frame - cfg->epoch_sfn + 1024) % 1024;
+  const int diff2 = (cfg->epoch_sfn - ref_frame + 1024) % 1024;
+  if (diff1 < diff2) // epoch before the reception
+    return cfg->epoch_sfn <= ref_frame ? cfg->epoch_ref_hfn : cfg->epoch_ref_hfn - 1;
+  return cfg->epoch_sfn >= ref_frame ? cfg->epoch_ref_hfn : cfg->epoch_ref_hfn + 1;
+}
+
 void fix_ntn_epoch_hfn(PHY_VARS_NR_UE *UE, int hfn, int frame)
 {
-  if (!UE->nrUE_config.ntn_config.is_targetcell)
+  fapi_nr_ntn_config_t *cfg = &UE->nrUE_config.ntn_config;
+  if (!cfg->is_targetcell)
     return;
-  UE->nrUE_config.ntn_config.is_targetcell = false;
+  cfg->is_targetcell = false;
+  cfg->epoch_hfn = get_target_epoch_hfn(cfg);
+  const int frames_since_epoch = (hfn - cfg->epoch_hfn) * 1024 + frame - cfg->epoch_sfn;
+  LOG_I(PHY,
+        "epoch %d.%d (HFN.SFN) received at %d.%d, %d frames in the %s\n",
+        cfg->epoch_hfn,
+        cfg->epoch_sfn,
+        cfg->epoch_ref_hfn,
+        cfg->epoch_ref_frame,
+        abs(frames_since_epoch),
+        frames_since_epoch >= 0 ? "past" : "future");
+}
 
-  const int epoch_frame = UE->nrUE_config.ntn_config.epoch_sfn;
-  const int diff1 = (frame - epoch_frame + 1024) % 1024;
-  const int diff2 = (epoch_frame - frame + 1024) % 1024;
-
-  int *epoch_hfn = &UE->nrUE_config.ntn_config.epoch_hfn;
-  if (diff1 < diff2) { // epoch_frame in the past
-    LOG_I(PHY, "epoch is %d frames in the past\n", diff1);
-    if (epoch_frame <= frame)
-      *epoch_hfn = hfn;
-    else
-      *epoch_hfn = hfn - 1;
-  } else { // epoch_frame in the future
-    LOG_I(PHY, "epoch is %d frames in the future\n", diff2);
-    if (epoch_frame >= frame)
-      *epoch_hfn = hfn;
-    else
-      *epoch_hfn = hfn + 1;
-  }
-  LOG_I(PHY, "setting epoch_hfn = %d\n", *epoch_hfn);
+/* DL Doppler of the target cell at its synchronization, at abs_subframe (the epoch can be long ago, e.g.,
+ * conditional handover) */
+void apply_ntn_doppler_target_cell(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int abs_subframe)
+{
+  UE->nrUE_config.ntn_config.epoch_hfn = get_target_epoch_hfn(&UE->nrUE_config.ntn_config);
+  const int timing_advance_ntn = UE->timing_advance_ntn;
+  apply_ntn_timing_advance_and_doppler(UE, fp, abs_subframe);
+  UE->timing_advance_ntn = timing_advance_ntn;
 }
 
 // calculate TA and Doppler based on the NTN-Config, if abs_subframe_tx < 0 then apply only Doppler
