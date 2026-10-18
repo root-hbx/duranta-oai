@@ -25,6 +25,7 @@
 
 #include "rrc_defs.h"
 #include "rrc_proto.h"
+#include "rrc_UE_cho.h"
 #include "verify_RRC.h"
 #include "L2_interface_ue.h"
 #include "LAYER2/NR_MAC_UE/mac_proto.h"
@@ -965,6 +966,8 @@ static void nr_ue_meas_reset(meas_t *meas_cell, bool csi_meas)
     meas_cell->ss_rsrp_dBm.init = false;
 }
 
+static void nr_rrc_cho_release_all(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb);
+
 static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
                                                    NR_ReconfigurationWithSync_t *reconfigurationWithSync,
                                                    int gNB_index)
@@ -978,8 +981,22 @@ static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
     return;
   }
 
-  // Clear neighbor cell lists from measurement objects during handover
+  // UE configuration of the source PCell, to revert to it upon T304 expiry (5.3.5.8.3)
+  nr_ho_source_t *src = &rrc->ho_source;
+  src->valid = true;
+  src->pci = rrc->phyCellID;
+  src->arfcn_ssb = rrc->arfcn_ssb;
+  src->rnti = rrc->rnti;
+  memcpy(src->kgnb, rrc->kgnb, sizeof(src->kgnb));
+  memcpy(src->nh, rrc->nh, sizeof(src->nh));
+  src->nhcc = rrc->nhcc;
+
+  // remove the conditional reconfigurations and their measurement configuration (5.3.5.5.2), also
+  // when this is the execution of one of them (the condRRCReconfig being applied is a copy)
   rrcPerNB_t *rrcNB = &rrc->perNB[gNB_index];
+  nr_rrc_cho_release_all(rrc, rrcNB);
+
+  // Clear neighbor cell lists from measurement objects during handover
   for (int i = 0; i < NR_MAX_MEAS_OBJ; i++) {
     if (rrcNB->MeasObj[i] && rrcNB->MeasObj[i]->measObject.present == NR_MeasObjectToAddMod__measObject_PR_measObjectNR) {
       NR_MeasObjectNR_t *measObjNR = rrcNB->MeasObj[i]->measObject.choice.measObjectNR;
@@ -1257,9 +1274,9 @@ static void handle_measobj_remove(rrcPerNB_t *rrc, struct NR_MeasObjectToRemoveL
     // for each measObjectId included in the received measObjectToRemoveList
     // that is part of measObjectList in the configuration
     NR_MeasObjectId_t id = *remove_list->list.array[i];
-    if (rrc->MeasObj[id - 1]) {
+    if (rrc->MeasObj[id]) {
       // remove the entry with the matching measObjectId from the measObjectList
-      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, rrc->MeasObj[id - 1]);
+      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, rrc->MeasObj[id]);
       // remove all measId associated with this measObjectId from the measIdList
       for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
         if (rrc->MeasId[j] && rrc->MeasId[j]->measObjectId == id) {
@@ -1632,6 +1649,18 @@ static void handle_measid_addmod(rrcPerNB_t *rrc,
           }
         }
       }
+      // conditional reconfiguration (CHO) execution conditions on neighbour cells: extract neighbor cell info for MAC
+      else if (reportNR->reportType.present == NR_ReportConfigNR__reportType_PR_condTriggerConfig_r16) {
+        int ev = reportNR->reportType.choice.condTriggerConfig_r16->condEventId.present;
+        if ((ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA3
+             || ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA5
+             || ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA4_r17)
+            && rrc->MeasObj[measObjectId]
+            && rrc->MeasObj[measObjectId]->measObject.present == NR_MeasObjectToAddMod__measObject_PR_measObjectNR) {
+          NR_MeasObjectNR_t *obj_nr = rrc->MeasObj[measObjectId]->measObject.choice.measObjectNR;
+          extract_neighbor_cells_from_measObject(obj_nr, neighbor_cells, num_neighbors, max_neighbors, serving_cell_pci);
+        }
+      }
       // Check for periodical report and extract neighbor cell info for MAC
       else if (reportNR->reportType.present == NR_ReportConfigNR__reportType_PR_periodical) {
         NR_PeriodicalReportConfig_t *periodical_config = reportNR->reportType.choice.periodical;
@@ -1685,6 +1714,62 @@ static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc,
       rrc->s_measure = measConfig->s_MeasureConfig->choice.csi_RSRP;
     }
   }
+}
+
+static const NR_ConditionalReconfiguration_r16_t *get_conditional_reconfiguration(const NR_RRCReconfiguration_IEs_t *ie)
+{
+  const NR_RRCReconfiguration_v1530_IEs_t *v1530 = ie->nonCriticalExtension;
+  const NR_RRCReconfiguration_v1540_IEs_t *v1540 = v1530 ? v1530->nonCriticalExtension : NULL;
+  const NR_RRCReconfiguration_v1560_IEs_t *v1560 = v1540 ? v1540->nonCriticalExtension : NULL;
+  const NR_RRCReconfiguration_v1610_IEs_t *v1610 = v1560 ? v1560->nonCriticalExtension : NULL;
+  return v1610 ? v1610->conditionalReconfiguration_r16 : NULL;
+}
+
+/** @brief Remove the measIds and reportConfigs of type condTriggerConfig, and the measObjects associated only
+ * with them (TS 38.331 5.3.5.5.2, 5.3.7.3, 5.3.11) */
+static void nr_rrc_remove_cond_meas_config(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb)
+{
+  bool cond_rc[NR_MAX_MEAS_CONFIG] = {0};
+  for (int i = 0; i < NR_MAX_MEAS_CONFIG; i++) {
+    const NR_ReportConfigToAddMod_t *rc = nb->ReportConfig[i];
+    cond_rc[i] =
+        rc && rc->reportConfig.present == NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR
+        && rc->reportConfig.choice.reportConfigNR->reportType.present == NR_ReportConfigNR__reportType_PR_condTriggerConfig_r16;
+  }
+  bool cond_obj[NR_MAX_MEAS_OBJ] = {0};
+  bool other_obj[NR_MAX_MEAS_OBJ] = {0};
+  for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+    const NR_MeasIdToAddMod_t *m = nb->MeasId[j];
+    if (m && cond_rc[m->reportConfigId])
+      cond_obj[m->measObjectId] = true;
+    else if (m)
+      other_obj[m->measObjectId] = true;
+  }
+  for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+    if (nb->MeasId[j] && cond_rc[nb->MeasId[j]->reportConfigId]) {
+      asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, nb->MeasId[j]);
+      handle_meas_reporting_remove(nb, j, &rrc->timers_and_constants);
+    }
+  }
+  for (int i = 0; i < NR_MAX_MEAS_CONFIG; i++) {
+    if (cond_rc[i])
+      asn1cFreeStruc(asn_DEF_NR_ReportConfigToAddMod, nb->ReportConfig[i]);
+  }
+  for (int i = 0; i < NR_MAX_MEAS_OBJ; i++) {
+    if (cond_obj[i] && !other_obj[i])
+      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, nb->MeasObj[i]);
+  }
+}
+
+/** @brief Remove all the entries within VarConditionalReconfig, and the measurement configuration of
+ * their execution conditions */
+static void nr_rrc_cho_release_all(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb)
+{
+  if (!nr_rrc_cho_configured(rrc))
+    return;
+  RRCLOG_I("CHO: release all candidate cells\n");
+  nr_rrc_cho_release(rrc);
+  nr_rrc_remove_cond_meas_config(rrc, nb);
 }
 
 static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_index, NR_RRCReconfiguration_t *reconfiguration)
@@ -1747,6 +1832,17 @@ static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_
       }
       if (ie->measConfig) {
         RRCLOG_I("RRCReconfiguration includes Measurement Configuration\n");
+        // a modified measId of a CHO execution condition is no longer fulfilled (5.3.5.13.4)
+        // (before processing: the measConfig entries are moved into the UE configuration)
+        const NR_MeasConfig_t *mc = ie->measConfig;
+        for (int i = 0; mc->measIdToAddModList && i < mc->measIdToAddModList->list.count; i++)
+          nr_rrc_cho_meas_id_modified(rrc, mc->measIdToAddModList->list.array[i]->measId);
+        for (int i = 0; mc->reportConfigToAddModList && i < mc->reportConfigToAddModList->list.count; i++) {
+          for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+            if (rrcNB->MeasId[j] && rrcNB->MeasId[j]->reportConfigId == mc->reportConfigToAddModList->list.array[i]->reportConfigId)
+              nr_rrc_cho_meas_id_modified(rrc, j);
+          }
+        }
         nr_neighbor_cell_info_t neighbor_cells[NUMBER_OF_NEIGHBORING_CELLS_MAX];
         int num_neighbors = 0;
         nr_rrc_ue_process_measConfig(rrcNB, ie->measConfig, &rrc->timers_and_constants, neighbor_cells, &num_neighbors, NUMBER_OF_NEIGHBORING_CELLS_MAX, rrc->phyCellID);
@@ -1754,6 +1850,9 @@ static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_
           nr_rrc_mac_config_req_meas(rrc->ue_id, neighbor_cells, num_neighbors);
         }
       }
+      const NR_ConditionalReconfiguration_r16_t *cond_reconfig = get_conditional_reconfiguration(ie);
+      if (cond_reconfig)
+        nr_rrc_cho_configure(rrc, cond_reconfig);
       if (ie->lateNonCriticalExtension) {
         RRCLOG_E("RRCReconfiguration includes lateNonCriticalExtension. Not handled.\n");
       }
@@ -3010,7 +3109,7 @@ void nr_ue_meas_filtering(rrcPerNB_t *rrc, meas_t *meas_cell, uint16_t Nid_cell,
     apply_ema(&meas_cell->ss_rsrp_dBm, l3_measurements->ssb_filter_coeff_rsrp, rsrp_dBm);
 }
 
-static int get_rsrp_value(const meas_t *cell)
+int nr_rrc_get_l3_rsrp(const meas_t *cell)
 {
   if (cell->ss_rsrp_dBm.init)
     return cell->ss_rsrp_dBm.val;
@@ -3078,7 +3177,7 @@ static void handle_event_a2(l3_measurements_t *l3_measurements,
     return;
   meas_report_params_t *params = &l3_measurements->meas_report[meas_id];
   meas_t *serving_cell = &l3_measurements->serving_cell;
-  int serving_cell_rsrp = get_rsrp_value(serving_cell);
+  int serving_cell_rsrp = nr_rrc_get_l3_rsrp(serving_cell);
   if (serving_cell_rsrp == INT_MAX) {
     LOG_E(NR_RRC, "There are no RSRP measurements taken for the active cell\n");
   }
@@ -3125,7 +3224,7 @@ static void handle_event_a3(l3_measurements_t *l3_measurements,
   meas_report_params_t *params = &l3_measurements->meas_report[meas_id];
   meas_t *serving_cell = &l3_measurements->serving_cell;
 
-  int serving_cell_rsrp = get_rsrp_value(serving_cell);
+  int serving_cell_rsrp = nr_rrc_get_l3_rsrp(serving_cell);
   if (serving_cell_rsrp == INT_MAX) {
     LOG_D(NR_RRC, "There are no RSRP measurements taken for the serving cell\n");
     return;
@@ -3141,7 +3240,7 @@ static void handle_event_a3(l3_measurements_t *l3_measurements,
 
   for (int i = 0; i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
     meas_t *neighboring_cell = &l3_measurements->neighboring_cell[i];
-    int neighboring_cell_rsrp = get_rsrp_value(neighboring_cell);
+    int neighboring_cell_rsrp = nr_rrc_get_l3_rsrp(neighboring_cell);
 
     if (neighboring_cell_rsrp == INT_MAX) {
       LOG_D(NR_RRC, "There are no RSRP measurements taken for the neighboring cell %d\n", i);
@@ -3232,6 +3331,7 @@ static void nr_rrc_handle_ra_indication(NR_UE_RRC_INST_t *rrc, bool ra_succeeded
     // procedures described in 5.3.5.3 of 38.331 when
     // reconfigurationWithSync is included in spCellConfig
     nr_timer_stop(&timers->T304);
+    rrc->ho_source.valid = false;
 
     // TODO apply the parts of the CQI reporting configuration,
     // the scheduling request configuration and the sounding RS
@@ -3565,6 +3665,11 @@ void nr_rrc_ue_process_sidelink_radioResourceConfig(NR_SetupRelease_SL_ConfigDed
 
 static void nr_rrc_initiate_rrcReestablishment(NR_UE_RRC_INST_t *rrc, NR_ReestablishmentCause_t cause)
 {
+  /* the CHO recovery of attemptCondReconfig (5.3.7.3) is not supported: the conditional reconfigurations
+   * are removed as when the cell selected for the re-establishment is not a candidate */
+  if (rrc->cond_reconfig.attempt_cond_reconfig)
+    RRCLOG_W("CHO: attemptCondReconfig not supported, re-establishment instead\n");
+  nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
   rrc->reestablishment_cause = cause;
   rrc->reestab_source_pci = rrc->phyCellID;
   rrc->reestab_source_crnti = rrc->rnti;
@@ -3649,6 +3754,61 @@ void handle_RRCRelease(NR_UE_RRC_INST_t *rrc)
   asn1cFreeStruc(asn_DEF_NR_RRCRelease, rrc->RRCRelease);
 }
 
+/** @brief T304 expiry, reconfiguration with sync failure of the MCG (TS 38.331 5.3.5.8.3): revert back to the
+ * UE configuration used in the source PCell (cell, C-RNTI and keys, for the re-establishment request), then
+ * initiate the connection re-establishment */
+void handle_t304_expiry(NR_UE_RRC_INST_t *rrc)
+{
+  nr_ho_source_t *src = &rrc->ho_source;
+  RRCLOG_W("Reconfiguration with sync failure (T304 expiry) towards PCI %d, re-establishment from source PCI %d\n",
+           rrc->phyCellID,
+           src->valid ? src->pci : -1);
+  if (src->valid) {
+    rrc->phyCellID = src->pci;
+    rrc->arfcn_ssb = src->arfcn_ssb;
+    rrc->rnti = src->rnti;
+    memcpy(rrc->kgnb, src->kgnb, sizeof(rrc->kgnb));
+    memcpy(rrc->nh, src->nh, sizeof(rrc->nh));
+    rrc->nhcc = src->nhcc;
+    src->valid = false;
+  }
+  nr_rrc_initiate_rrcReestablishment(rrc, NR_ReestablishmentCause_handoverFailure);
+}
+
+/** @brief Conditional reconfiguration evaluation every step_ms while connected and no reconfiguration
+ * with sync is ongoing, and execution of the selected cell (5.3.5.13.5): apply its condRRCReconfig */
+void nr_rrc_cho_tick(NR_UE_RRC_INST_t *rrc, int step_ms)
+{
+  if (rrc->nrRrcState != RRC_STATE_CONNECTED_NR || nr_timer_is_active(&rrc->timers_and_constants.T304)
+      || !nr_rrc_cho_configured(rrc))
+    return;
+  const int sel = nr_rrc_cho_evaluate(rrc, 0, step_ms);
+  if (sel < 0)
+    return;
+  const nr_cond_reconfig_t *c = &rrc->cond_reconfig.cand[sel];
+  RRCLOG_A("CHO: execute candidate %ld, PCI %d (condRRCReconfig received at %d.%d, now %d.%d HFN.frame)\n",
+           c->id,
+           c->pci,
+           c->rx_hfn,
+           c->rx_frame,
+           rrc->current_hfn,
+           rrc->current_frame);
+  NR_RRCReconfiguration_t *rec = NULL;
+  asn_dec_rval_t dec =
+      uper_decode_complete(NULL, &asn_DEF_NR_RRCReconfiguration, (void **)&rec, c->rrc_reconfig.buf, c->rrc_reconfig.len);
+  if (dec.code != RC_OK) {
+    // the stored configuration cannot be applied: the UE stays with the source, the candidate is dropped
+    RRCLOG_E("CHO: condRRCReconfig of candidate %ld cannot be decoded\n", c->id);
+    ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rec);
+    nr_rrc_cho_release(rrc);
+    return;
+  }
+  // its reconfigurationWithSync removes VarConditionalReconfig (5.3.5.5.2), rec is a copy
+  nr_rrc_ue_process_rrcReconfiguration(rrc, 0, rec);
+  nr_rrc_ue_generate_RRCReconfigurationComplete(rrc, 1, rec->rrc_TransactionIdentifier);
+  ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rec);
+}
+
 void handle_rlf_detection(NR_UE_RRC_INST_t *rrc)
 {
   // 5.3.10.3 in 38.331
@@ -3675,6 +3835,10 @@ void nr_rrc_going_to_IDLE(NR_UE_RRC_INST_t *rrc,
 {
   NR_UE_Timers_Constants_t *tac = &rrc->timers_and_constants;
   struct NR_RRCRelease_IEs *rrcReleaseIEs = RRCRelease ? RRCRelease->criticalExtensions.choice.rrcRelease : NULL;
+
+  // remove all the entries within VarConditionalReconfig (5.3.11)
+  nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
+  rrc->ho_source.valid = false;
 
   // if going to RRC_IDLE was triggered by reception
   // of the RRCRelease message including a waitTime

@@ -879,6 +879,13 @@ void *UE_thread(void *arg)
     AssertFatal(!syncRunning, "At this point synchronization can't be running\n");
 
     if (!UE->is_synchronized) {
+      /* what RRC sent to MAC meanwhile, e.g., a re-establishment after a failed handover: its synchronization
+       * request replaces the ongoing one */
+      for (notifiedFIFO_elt_t *elt; (elt = pollNotifiedFIFO(&mac->input_nf));) {
+        process_msg_rcc_to_mac(NotifiedFifoData(elt), UE->Mod_id);
+        delNotifiedFIFO_elt(elt);
+      }
+      handle_sync_req_from_mac(UE);
       // seed the out-of-sync tick once from the last known synchronized frame/hfn:
       // absolute_slot doesn't advance while out of sync, so failed sync attempts must not re-seed
       if (!out_of_sync_rrc_tick_seeded) {

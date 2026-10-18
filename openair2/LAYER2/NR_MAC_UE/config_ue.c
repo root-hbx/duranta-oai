@@ -2051,7 +2051,11 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
       mac->state = UE_PERFORMING_RA;
       break;
     case NR_MAC_RA_START_REESTABLISHMENT: {
-      fapi_nr_synch_request_t sync_req = {.target_Nid_cell = mac->physCellId, .ssb_bw_scan = false};
+      // cell selection (38.331 5.3.7.2): any cell of the carrier, not only the failed one (e.g., the target
+      // of a failed handover)
+      fapi_nr_synch_request_t sync_req = {.target_Nid_cell = -1, .ssb_bw_scan = false};
+      // also releases the dedicated preambles of a failed reconfiguration with sync (5.3.5.8.3)
+      reset_ra(mac, false);
       reset_mac_inst(mac);
       nr_ue_mac_default_configs(mac);
       nr_ue_reset_sync_state(mac, true);

@@ -38,6 +38,7 @@
 #include "NR_VarMeasReport.h"
 
 #include "RRC/NR/nr_rrc_common.h"
+#include "common/utils/ds/byte_array.h"
 #include "as_message.h"
 #include "common/utils/nr/nr_common.h"
 #include "notified_fifo.h"
@@ -205,6 +206,41 @@ typedef struct rrcPerNB {
   l3_measurements_t l3_measurements;
 } rrcPerNB_t;
 
+/* Conditional reconfiguration of one candidate SpCell (conditional handover), TS 38.331 5.3.5.13 */
+typedef struct {
+  long id; // condReconfigId, 0: free entry
+  int num_meas_id;
+  long meas_id[2]; // condExecutionCond
+  byte_array_t rrc_reconfig; // condRRCReconfig
+  int pci; // applicable cell: PCI of the reconfigurationWithSync, -1 if unknown
+  // HFN and frame of the reception of condRRCReconfig, the time reference of a target cell epochTime
+  int rx_hfn;
+  int rx_frame;
+  // evaluation of the trigger condition of each measId: fulfilled, and for how long (ms) the entering
+  // condition, or the leaving condition once fulfilled, has been met (time to trigger)
+  bool fulfilled[2];
+  int enter_ms[2];
+  int leave_ms[2];
+} nr_cond_reconfig_t;
+
+/* VarConditionalReconfig of the MCG */
+typedef struct {
+  bool attempt_cond_reconfig;
+  nr_cond_reconfig_t cand[NR_maxNrofCondCells_r16];
+} nr_var_cond_reconfig_t;
+
+/* UE configuration of the source PCell during a reconfiguration with sync, to revert to it on failure
+ * (TS 38.331 5.3.5.8.3), as far as the re-establishment needs it */
+typedef struct {
+  bool valid;
+  uint32_t pci;
+  long arfcn_ssb;
+  rnti_t rnti;
+  uint8_t kgnb[32];
+  uint8_t nh[32];
+  uint64_t nhcc;
+} nr_ho_source_t;
+
 typedef struct NR_UE_RRC_INST_s {
   instance_t ue_id;
   rrcPerNB_t perNB[NB_CNX_UE];
@@ -261,6 +297,8 @@ typedef struct NR_UE_RRC_INST_s {
   bool is_NTN_UE;
   NR_NTN_Config_r17_t *target_ntncfg;
   bool process_target_ntncfg;
+  nr_var_cond_reconfig_t cond_reconfig;
+  nr_ho_source_t ho_source;
   notifiedFIFO_t *mac_input_nf;
   /* NAS PDU deferred until UL-DCCH exists: consumed in RRCSetupComplete/RRCResumeComplete dedicatedNAS-Message */
   as_nas_info_t pending_initial_nas;
