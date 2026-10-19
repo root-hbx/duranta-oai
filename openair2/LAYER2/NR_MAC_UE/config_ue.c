@@ -2053,9 +2053,7 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
       mac->state = UE_PERFORMING_RA;
       break;
     case NR_MAC_RA_START_REESTABLISHMENT: {
-      // cell selection (38.331 5.3.7.2): any cell of the carrier, not only the failed one (e.g., the target
-      // of a failed handover)
-      fapi_nr_synch_request_t sync_req = {.target_Nid_cell = -1, .ssb_bw_scan = false};
+      // the cell selection follows (nr_rrc_mac_cell_search)
       // also releases the dedicated preambles of a failed reconfiguration with sync (5.3.5.8.3)
       reset_ra(mac, false);
       reset_mac_inst(mac);
@@ -2072,12 +2070,38 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
         lc->rb_suspended = true;
       }
       configure_timeAlignmentTimer(&mac->time_alignment_timer, mac->timeAlignmentTimerCommon, mac->current_UL_BWP->scs);
-      nr_ue_send_synch_request(mac, module_id, 0, &sync_req);
       break;
     }
     default:
       AssertFatal(false, "unknown nr_mac_ra_start_cause_t %d\n", cause);
   }
+}
+
+/** @brief Cell selection of the re-establishment (38.331 5.3.7.2): synchronization to a cell of the carrier,
+ * pci or any (-1), not only the failed one (e.g., the target of a failed handover). With a satellite ntn_config
+ * (e.g., of a conditional handover candidate), the DL Doppler of that satellite is pre-compensated, else the one
+ * of the satellite of the serving cell */
+void nr_rrc_mac_cell_search(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame)
+{
+  NR_UE_MAC_INST_t *mac = get_mac_inst(module_id);
+  int ret = pthread_mutex_lock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
+  fapi_nr_ntn_config_t *ntn = &mac->phy_config.config_req.ntn_config;
+  if (ntn_config) {
+    configure_ntn_ta(ntn, ntn_config, hfn, frame, true);
+  } else if (mac->serving_ntn_config.cell_specific_k_offset) {
+    *ntn = mac->serving_ntn_config;
+    ntn->is_targetcell = true;
+    ntn->params_changed = true;
+  }
+  if (ntn->params_changed) {
+    mac->if_module->phy_config_request(&mac->phy_config);
+    ntn->params_changed = false;
+  }
+  fapi_nr_synch_request_t sync_req = {.target_Nid_cell = pci, .ssb_bw_scan = false};
+  nr_ue_send_synch_request(mac, module_id, 0, &sync_req);
+  ret = pthread_mutex_unlock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
 }
 
 /** @brief All RRC-initiated RA entry points */
@@ -2152,6 +2176,8 @@ void nr_rrc_mac_config_other_sib(module_id_t module_id, NR_SIB19_r17_t *sib19, i
     configure_ntn_ta(&mac->phy_config.config_req.ntn_config, mac->sc_info.ntn_Config_r17, hfn, frame, false);
     mac->if_module->phy_config_request(&mac->phy_config);
     mac->phy_config.config_req.ntn_config.params_changed = false;
+    if (mac->state == UE_CONNECTED)
+      mac->serving_ntn_config = mac->phy_config.config_req.ntn_config;
   }
   if (mac->state == UE_RECEIVING_SIB && can_start_ra)
     mac->state = UE_PERFORMING_RA;

@@ -18,5 +18,10 @@ void nr_rrc_cho_release(NR_UE_RRC_INST_t *rrc);
 /** @brief Conditional reconfiguration evaluation (5.3.5.13.4), every step_ms
  *  @return index in VarConditionalReconfig of the cell selected for execution (5.3.5.13.5), -1 if none */
 int nr_rrc_cho_evaluate(NR_UE_RRC_INST_t *rrc, int gnb_index, int step_ms);
+/** @return index in VarConditionalReconfig of the candidate of a cell selected after a failure for which the stored
+ *  condRRCReconfig applies (5.3.7.3: applicable cell, condEventT1 leaving condition not fulfilled), -1 if none */
+int nr_rrc_cho_recovery_candidate(NR_UE_RRC_INST_t *rrc, int gnb_index, int pci);
+/** @return a copy of the ntn-Config of the reconfigurationWithSync of a candidate, NULL if none */
+NR_NTN_Config_r17_t *nr_rrc_cho_get_ntn_config(const nr_cond_reconfig_t *c);
 
 #endif /* RRC_UE_CHO_H_ */

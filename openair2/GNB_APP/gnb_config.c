@@ -2276,6 +2276,12 @@ static void fill_cho_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
   cho->a3_offset = *cho_params[CHO_A3_OFFSET_IDX].i64ptr;
   cho->a3_hysteresis = *cho_params[CHO_A3_HYSTERESIS_IDX].i64ptr;
   cho->a3_time_to_trigger = *cho_params[CHO_A3_TTT_IDX].i64ptr;
+  cho->attempt_cond_reconfig = *cho_params[CHO_ATTEMPT_IDX].i64ptr != 0;
+  AssertFatal(cho->a3_offset >= -30 && cho->a3_offset <= 30, "CHO a3_offset %ld out of -30..30\n", cho->a3_offset);
+  AssertFatal(cho->a3_hysteresis >= 0 && cho->a3_hysteresis <= 30, "CHO a3_hysteresis %ld out of 0..30\n", cho->a3_hysteresis);
+  AssertFatal(cho->a3_time_to_trigger >= 0 && cho->a3_time_to_trigger <= 15,
+              "CHO a3_time_to_trigger %ld out of 0..15\n",
+              cho->a3_time_to_trigger);
 }
 
 static void fill_measurement_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)

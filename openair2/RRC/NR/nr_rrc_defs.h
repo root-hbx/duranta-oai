@@ -336,6 +336,7 @@ typedef struct {
   long a3_offset; // condEventA3 a3-Offset in 0.5 dB
   long a3_hysteresis; // condEventA3 hysteresis in 0.5 dB
   long a3_time_to_trigger; // condEventA3 timeToTrigger, TimeToTrigger
+  bool attempt_cond_reconfig; // attemptCondReconfig
 } nr_cho_configuration_t;
 
 /** @brief Per-neighbor cell-specific offsets (TS 38.331), shared by SIB3 and SIB4

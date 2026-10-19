@@ -468,6 +468,14 @@ typedef struct {
 typedef struct {
   nr_mac_ra_start_cause_t cause;
 } nr_mac_rrc_start_ra_t;
+// cell selection: synchronization to a cell (pci, -1: any) of a satellite (ntn_config with the HFN and frame
+// of its reception, NULL: the satellite of the cell where the UE was)
+typedef struct {
+  int pci;
+  NR_NTN_Config_r17_t *ntn_config;
+  int hfn;
+  int frame;
+} nr_mac_rrc_cell_search_t;
 
 enum payload_type {
   NR_MAC_RRC_CONFIG_RESET,
@@ -477,7 +485,8 @@ enum payload_type {
   NR_MAC_RRC_CONFIG_OTHER_SIB,
   NR_MAC_RRC_START_RA,
   NR_MAC_RRC_SCHED_SIB,
-  NR_MAC_RRC_RESUME_RB
+  NR_MAC_RRC_RESUME_RB,
+  NR_MAC_RRC_CELL_SEARCH
 };
 
 typedef struct {
@@ -491,6 +500,7 @@ typedef struct {
     nr_mac_rrc_config_other_sib_t config_other_sib;
     nr_mac_rrc_start_ra_t start_ra;
     nr_mac_rrc_resume_rb_t resume_rb;
+    nr_mac_rrc_cell_search_t cell_search;
   } payload;
 } nr_mac_rrc_message_t;
 

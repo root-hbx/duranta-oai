@@ -7,6 +7,9 @@
 #   BEAM, RAMP (122, 10)  the UE moves from the sat 0 beam to the sat 1 one in RAMP s: the gains of the cells cross in
 #                 STEP dB steps (default 4), from sat 1 NBR_ATT dB weaker to sat 0 NBR_ATT dB weaker; condEventA3 follows
 #   END (165)  last check
+# CHO recovery (attemptCondReconfig) after a radio link failure in the source: no condEventA3 before it (15 dB, 5.12 s)
+#   GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.attempt_cond_reconfig 1 --gNBs.[0].nr_cho_configuration.a3_offset 30
+#   --gNBs.[0].nr_cho_configuration.a3_time_to_trigger 15" BEAM=130 RAMP=1 STEP=60 NBR_ATT=60 END=150 ntn_cho_loop.sh
 # Output under build/pcap-ntn-cho/<trans|regen>-<time>: results.txt (one line per run), logs/<run>/, summary.txt.
 # results.txt: run, OK|FAIL, trace time of the execution (s), interruption (ms, CHO execution at the UE to the
 # RRCReconfigurationComplete at the target), largest ping gap (s), max predicted Common TA error of the target (us)

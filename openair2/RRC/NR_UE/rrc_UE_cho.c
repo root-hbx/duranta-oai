@@ -14,26 +14,51 @@
 #include "NR_RRCReconfiguration.h"
 #include "NR_CellGroupConfig.h"
 
-/** @return PCI of the reconfigurationWithSync of the masterCellGroup of an RRCReconfiguration, -1 if none */
-static int get_applicable_pci(const byte_array_t *reconfig)
+/** @brief Decode the masterCellGroup of an RRCReconfiguration, NULL if none (to free by the caller) */
+static NR_CellGroupConfig_t *decode_master_cell_group(const byte_array_t *reconfig)
 {
-  int pci = -1;
+  NR_CellGroupConfig_t *cg = NULL;
   NR_RRCReconfiguration_t *rec = NULL;
   asn_dec_rval_t dec = uper_decode_complete(NULL, &asn_DEF_NR_RRCReconfiguration, (void **)&rec, reconfig->buf, reconfig->len);
   if (dec.code == RC_OK && rec->criticalExtensions.present == NR_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration) {
     const NR_RRCReconfiguration_IEs_t *ies = rec->criticalExtensions.choice.rrcReconfiguration;
     const OCTET_STRING_t *mcg = ies->nonCriticalExtension ? ies->nonCriticalExtension->masterCellGroup : NULL;
-    NR_CellGroupConfig_t *cg = NULL;
-    if (mcg && uper_decode_complete(NULL, &asn_DEF_NR_CellGroupConfig, (void **)&cg, mcg->buf, mcg->size).code == RC_OK) {
-      const NR_SpCellConfig_t *sp = cg->spCellConfig;
-      if (sp && sp->reconfigurationWithSync && sp->reconfigurationWithSync->spCellConfigCommon
-          && sp->reconfigurationWithSync->spCellConfigCommon->physCellId)
-        pci = *sp->reconfigurationWithSync->spCellConfigCommon->physCellId;
+    if (mcg && uper_decode_complete(NULL, &asn_DEF_NR_CellGroupConfig, (void **)&cg, mcg->buf, mcg->size).code != RC_OK) {
+      ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, cg);
+      cg = NULL;
     }
-    ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, cg);
   }
   ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rec);
+  return cg;
+}
+
+static const NR_ServingCellConfigCommon_t *get_sync_scc(const NR_CellGroupConfig_t *cg)
+{
+  const NR_SpCellConfig_t *sp = cg ? cg->spCellConfig : NULL;
+  if (!sp || !sp->reconfigurationWithSync)
+    return NULL;
+  return sp->reconfigurationWithSync->spCellConfigCommon;
+}
+
+/** @return PCI of the reconfigurationWithSync of the masterCellGroup of an RRCReconfiguration, -1 if none */
+static int get_applicable_pci(const byte_array_t *reconfig)
+{
+  NR_CellGroupConfig_t *cg = decode_master_cell_group(reconfig);
+  const NR_ServingCellConfigCommon_t *scc = get_sync_scc(cg);
+  const int pci = scc && scc->physCellId ? *scc->physCellId : -1;
+  ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, cg);
   return pci;
+}
+
+NR_NTN_Config_r17_t *nr_rrc_cho_get_ntn_config(const nr_cond_reconfig_t *c)
+{
+  NR_CellGroupConfig_t *cg = decode_master_cell_group(&c->rrc_reconfig);
+  const NR_ServingCellConfigCommon_t *scc = get_sync_scc(cg);
+  NR_NTN_Config_r17_t *ntn = NULL;
+  if (scc && scc->ext2 && scc->ext2->ntn_Config_r17)
+    AssertFatal(asn_copy(&asn_DEF_NR_NTN_Config_r17, (void **)&ntn, scc->ext2->ntn_Config_r17) == 0, "cannot copy ntn-Config\n");
+  ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, cg);
+  return ntn;
 }
 
 static nr_cond_reconfig_t *find_cand(nr_var_cond_reconfig_t *var, long id)
@@ -142,6 +167,7 @@ void nr_rrc_cho_release(NR_UE_RRC_INST_t *rrc)
       free_cand(&rrc->cond_reconfig.cand[i]);
   }
   rrc->cond_reconfig.attempt_cond_reconfig = false;
+  rrc->cond_reconfig.recovery = false;
 }
 
 /* cell individual offset (dB) of a cell in a measurement object, 0 if not configured */
@@ -304,4 +330,40 @@ int nr_rrc_cho_evaluate(NR_UE_RRC_INST_t *rrc, int gnb_index, int step_ms)
     }
   }
   return selected;
+}
+
+/* condEventT1 leaving condition T1-2 (5.5.4.16) fulfilled: the UTC time Mt is after the end of the window */
+static bool t1_left(const struct NR_CondTriggerConfig_r16__condEventId__condEventT1_r17 *t1)
+{
+  uint64_t thresh = 0;
+  if (asn_INTEGER2uint64(&t1->t1_Threshold_r17, &thresh) != 0)
+    return false;
+  return nr_ue_gnss_utc_ms() > thresh * 10 + t1->duration_r17 * 100;
+}
+
+int nr_rrc_cho_recovery_candidate(NR_UE_RRC_INST_t *rrc, int gnb_index, int pci)
+{
+  const rrcPerNB_t *nb = &rrc->perNB[gnb_index];
+  for (int i = 0; i < NR_maxNrofCondCells_r16; i++) {
+    const nr_cond_reconfig_t *c = &rrc->cond_reconfig.cand[i];
+    if (!c->id || c->pci != pci)
+      continue;
+    bool left = false;
+    for (int k = 0; k < c->num_meas_id; k++) {
+      const NR_MeasIdToAddMod_t *meas_id = c->meas_id[k] < NR_MAX_MEAS_ID ? nb->MeasId[c->meas_id[k]] : NULL;
+      const NR_ReportConfigToAddMod_t *rc = meas_id ? nb->ReportConfig[meas_id->reportConfigId] : NULL;
+      if (!rc || rc->reportConfig.present != NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR
+          || rc->reportConfig.choice.reportConfigNR->reportType.present != NR_ReportConfigNR__reportType_PR_condTriggerConfig_r16)
+        continue;
+      const NR_CondTriggerConfig_r16_t *cond = rc->reportConfig.choice.reportConfigNR->reportType.choice.condTriggerConfig_r16;
+      if (cond->condEventId.present == NR_CondTriggerConfig_r16__condEventId_PR_condEventT1_r17)
+        left |= t1_left(cond->condEventId.choice.condEventT1_r17);
+    }
+    if (left) {
+      LOG_I(NR_RRC, "CHO: candidate %ld PCI %d not applicable after the condEventT1 window\n", c->id, c->pci);
+      return -1;
+    }
+    return i;
+  }
+  return -1;
 }

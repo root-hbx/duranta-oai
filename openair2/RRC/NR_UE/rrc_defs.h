@@ -227,6 +227,10 @@ typedef struct {
 typedef struct {
   bool attempt_cond_reconfig;
   nr_cond_reconfig_t cand[NR_maxNrofCondCells_r16];
+  // attemptCondReconfig: first cell selection after a failure (5.3.7.3), the cell of candidate search_idx is
+  // searched first (-1: any cell)
+  bool recovery;
+  int search_idx;
 } nr_var_cond_reconfig_t;
 
 /* UE configuration of the source PCell during a reconfiguration with sync, to revert to it on failure

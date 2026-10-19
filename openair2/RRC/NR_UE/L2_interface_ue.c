@@ -153,6 +153,11 @@ void process_msg_rcc_to_mac(nr_mac_rrc_message_t *msg, int instance_id)
     case NR_MAC_RRC_RESUME_RB:
       nr_rrc_mac_resume_rb(instance_id, msg->payload.resume_rb.is_srb, msg->payload.resume_rb.rb_id);
       break;
+    case NR_MAC_RRC_CELL_SEARCH: {
+      nr_mac_rrc_cell_search_t *cs = &msg->payload.cell_search;
+      nr_rrc_mac_cell_search(instance_id, cs->pci, cs->ntn_config, cs->hfn, cs->frame);
+      ASN_STRUCT_FREE(asn_DEF_NR_NTN_Config_r17, cs->ntn_config);
+    } break;
     default:
       LOG_E(NR_MAC, "Unexpected msg from RRC: %d\n", msg->payload_type);
   }

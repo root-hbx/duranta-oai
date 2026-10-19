@@ -72,6 +72,7 @@ void nr_rrc_mac_start_ra(module_id_t module_id, nr_mac_ra_start_cause_t cause);
 struct position; /* forward declaration */
 void nr_rrc_mac_config_other_sib(module_id_t module_id, NR_SIB19_r17_t *sib19_r17, int hfn, int frame, bool can_start_ra);
 void nr_rrc_mac_resume_rb(module_id_t module_id, bool is_srb, int rb_id);
+void nr_rrc_mac_cell_search(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame);
 void nr_rrc_mac_config_req_reset(module_id_t module_id, NR_UE_MAC_reset_cause_t cause);
 
 typedef struct nr_neighbor_cell_info {

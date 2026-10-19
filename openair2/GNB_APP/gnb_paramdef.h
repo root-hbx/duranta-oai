@@ -418,6 +418,7 @@ typedef enum {
     {"a3_offset", "condEventA3 a3-Offset, 0.5 dB", 0, .i64ptr = NULL, .defint64val = 6, TYPE_INT64, 0},                             \
     {"a3_hysteresis", "condEventA3 hysteresis, 0.5 dB", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0},                        \
     {"a3_time_to_trigger", "condEventA3 timeToTrigger (TimeToTrigger index)", 0, .i64ptr = NULL, .defint64val = 7, TYPE_INT64, 0}, \
+    {"attempt_cond_reconfig", "attemptCondReconfig: CHO upon cell selection after a failure", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
   }
 // clang-format on
 #define CHO_T1_THRESHOLD_IDX 0
@@ -425,6 +426,7 @@ typedef enum {
 #define CHO_A3_OFFSET_IDX 2
 #define CHO_A3_HYSTERESIS_IDX 3
 #define CHO_A3_TTT_IDX 4
+#define CHO_ATTEMPT_IDX 5
 
 /* New Measurement Configurations*/
 

@@ -385,6 +385,10 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
   mc->reportConfigToAddModList = calloc_or_fail(1, sizeof(*mc->reportConfigToAddModList));
   mc->measIdToAddModList = calloc_or_fail(1, sizeof(*mc->measIdToAddModList));
   NR_ConditionalReconfiguration_r16_t *cr = calloc_or_fail(1, sizeof(*cr));
+  if (cfg->attempt_cond_reconfig) {
+    cr->attemptCondReconfig_r16 = calloc_or_fail(1, sizeof(*cr->attemptCondReconfig_r16));
+    *cr->attemptCondReconfig_r16 = NR_ConditionalReconfiguration_r16__attemptCondReconfig_r16_true;
+  }
   cr->condReconfigToAddModList_r16 = calloc_or_fail(1, sizeof(*cr->condReconfigToAddModList_r16));
   for (int i = 0; i < source->num_cho; i++) {
     nr_cho_candidate_t *c = &source->cho_cand[i];
