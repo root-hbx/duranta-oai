@@ -2059,8 +2059,11 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
       // also releases the dedicated preambles of a failed reconfiguration with sync (5.3.5.8.3)
       reset_ra(mac, false);
       reset_mac_inst(mac);
+      // Msg3 is the RRCReestablishmentRequest on CCCH, not the C-RNTI of an RA that failed before
+      mac->msg3_C_RNTI = false;
       nr_ue_mac_default_configs(mac);
-      nr_ue_reset_sync_state(mac, true);
+      // as in initial access, the RA starts with the SI of the selected cell (RRC acquires it after the MIB)
+      nr_ue_reset_sync_state(mac, false);
       release_mac_configuration(mac, RE_ESTABLISHMENT);
       for (int j = 0; j < mac->lc_ordered_list.count; j++) {
         nr_lcordered_info_t *lc = mac->lc_ordered_list.array[j];

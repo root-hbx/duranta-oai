@@ -2134,6 +2134,35 @@ static int check_si_status(NR_UE_RRC_SI_INFO *SI_info)
   return 0;
 }
 
+/** @brief Drop the stored system information (all of it but SIB1 if keep_sib1) */
+static void nr_rrc_invalidate_SI(NR_UE_RRC_SI_INFO *SI_info, bool keep_sib1)
+{
+  init_SI_timers(SI_info);
+  SI_info->sib_pending = false;
+  if (!keep_sib1)
+    SI_info->sib1_validity = false;
+  SI_info->sib2_validity = false;
+  SI_info->sib3_validity = false;
+  SI_info->sib4_validity = false;
+  SI_info->sib5_validity = false;
+  SI_info->sib6_validity = false;
+  SI_info->sib7_validity = false;
+  SI_info->sib8_validity = false;
+  SI_info->sib9_validity = false;
+  SI_info->sib10_validity = false;
+  SI_info->sib11_validity = false;
+  SI_info->sib12_validity = false;
+  SI_info->sib13_validity = false;
+  SI_info->sib14_validity = false;
+  SI_info->SInfo_r17.sib15_validity = false;
+  SI_info->SInfo_r17.sib16_validity = false;
+  SI_info->SInfo_r17.sib17_validity = false;
+  SI_info->SInfo_r17.sib18_validity = false;
+  SI_info->SInfo_r17.sib19_validity = false;
+  SI_info->SInfo_r17.sib20_validity = false;
+  SI_info->SInfo_r17.sib21_validity = false;
+}
+
 /*brief decode BCCH-BCH (MIB) message*/
 static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
                                                  const uint8_t gNB_index,
@@ -2178,6 +2207,8 @@ static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
   if (nr_timer_is_active(&timers->T311)) {
     nr_timer_stop(&timers->T311);
     rrc->ra_trigger = RRC_CONNECTION_REESTABLISHMENT;
+    // the selected cell may not be the last serving one: acquire its SIB1 (and SIB19) before the RA (5.2.2.1)
+    nr_rrc_invalidate_SI(&rrc->perNB[gNB_index].SInfo, false);
 
     // apply the default MAC Cell Group configuration
     // (done at MAC by calling nr_ue_mac_default_configs)
@@ -3949,34 +3980,8 @@ void nr_rrc_going_to_IDLE(NR_UE_RRC_INST_t *rrc,
    * With a normal no-redirection RRCRelease, preserve the already-acquired camped-cell context for paging. */
   const bool preserve_camped_context = rrc->nrRrcState != RRC_STATE_DETACH_NR && release_cause == OTHER && RRCRelease
                                        && (!rrcReleaseIEs || !rrcReleaseIEs->redirectedCarrierInfo);
-  for (int i = 0; i < NB_CNX_UE; i++) {
-    rrcPerNB_t *nb = &rrc->perNB[i];
-    NR_UE_RRC_SI_INFO *SI_info = &nb->SInfo;
-    init_SI_timers(SI_info);
-    SI_info->sib_pending = false;
-    if (!preserve_camped_context)
-      SI_info->sib1_validity = false;
-    SI_info->sib2_validity = false;
-    SI_info->sib3_validity = false;
-    SI_info->sib4_validity = false;
-    SI_info->sib5_validity = false;
-    SI_info->sib6_validity = false;
-    SI_info->sib7_validity = false;
-    SI_info->sib8_validity = false;
-    SI_info->sib9_validity = false;
-    SI_info->sib10_validity = false;
-    SI_info->sib11_validity = false;
-    SI_info->sib12_validity = false;
-    SI_info->sib13_validity = false;
-    SI_info->sib14_validity = false;
-    SI_info->SInfo_r17.sib15_validity = false;
-    SI_info->SInfo_r17.sib16_validity = false;
-    SI_info->SInfo_r17.sib17_validity = false;
-    SI_info->SInfo_r17.sib18_validity = false;
-    SI_info->SInfo_r17.sib19_validity = false;
-    SI_info->SInfo_r17.sib20_validity = false;
-    SI_info->SInfo_r17.sib21_validity = false;
-  }
+  for (int i = 0; i < NB_CNX_UE; i++)
+    nr_rrc_invalidate_SI(&rrc->perNB[i].SInfo, preserve_camped_context);
 
   if (rrc->nrRrcState == RRC_STATE_DETACH_NR) {
     asn1cFreeStruc(asn_DEF_NR_UE_NR_Capability, rrc->UECap.UE_NR_Capability);
