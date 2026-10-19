@@ -15,7 +15,9 @@ Helpers for the trace-driven LEO satellite channel model of the rfsimulator
 `data/` holds the default TLE (`default_leo600.tle`, a 600 km polar orbit), a
 300 s sample trace (`orbital_trace_s_300.csv`, Starlink DTC pass), and a pair of
 Starlink DTC satellites serving the same UE one after the other
-(`starlink_dtc_ho_pair.tle`, traces `ho_pair_sat0.csv` / `ho_pair_sat1.csv` from 2026-10-18T06:56:20Z).
+(`starlink_dtc_ho_pair.tle`, traces `ho_pair_sat0.csv` / `ho_pair_sat1.csv` from 2026-10-18T06:56:20Z),
+with a third satellite setting during their handover window (`ho_pair_sat2.csv`, elevation 15 deg or more until 183 s),
+a second conditional handover candidate.
 
 ## Trace format
 

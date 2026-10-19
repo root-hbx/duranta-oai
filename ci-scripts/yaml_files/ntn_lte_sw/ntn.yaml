@@ -1,11 +1,11 @@
-# NR NTN: one UE and two gNBs on a trace-driven LEO satellite (SAT_LEO_TRANS), against an external Open5GS 5GC.
+# NR NTN: one UE and two (or three) gNBs on a trace-driven LEO satellite (SAT_LEO_TRANS), against an external Open5GS 5GC.
 # Binaries come from a mounted build directory; see ntn.sh and doc/trace-based-ntn-tutorial.md.
 # Calibration (tools/ntn/calc_ntn_parameters.py) for the sample trace, UE = gNB at the mid-pass subpoint, fc 2488.4 MHz.
 # SR prohibit 32 ms (above the SR to grant round trip) and 32 SRs at most instead of the GEO 512 ms x 64: a UE the gNB
 # no longer serves (e.g., lost handover command) gives up on SR and starts a random access after about 1 s, not 33 s.
 # Xn: gNB2 sets up Xn with gNB1 when it starts, gNB1 only listens (the SCTP connect blocks the SCTP task, NGAP included,
 # as long as the peer does not exist).
-# PRACH root sequences 1 and 40 (16 roots each for 64 preambles at Ncs 34): with a shared root, the co-channel neighbour
+# PRACH root sequences 1, 40 and 80 (16 roots each for 64 preambles at Ncs 34): with a shared root, the co-channel neighbour
 # also detects the UE preambles and its RARs collide with the serving cell ones.
 x-oai: &oai
   image: ${OAI_IMG:-ntn-dev}
@@ -33,6 +33,12 @@ x-oai: &oai
       --channelmod.modellist_rfsimu_1.[2].pos_ue_x -3310204.0 --channelmod.modellist_rfsimu_1.[2].pos_ue_y -5006785.1
       --channelmod.modellist_rfsimu_1.[2].pos_ue_z 2157610.7 --channelmod.modellist_rfsimu_1.[2].pos_gnb_x -3310204.0
       --channelmod.modellist_rfsimu_1.[2].pos_gnb_y -5006785.1 --channelmod.modellist_rfsimu_1.[2].pos_gnb_z 2157610.7
+      --channelmod.modellist_rfsimu_1.[3].model_name rfsimu_channel_ue2
+      --channelmod.modellist_rfsimu_1.[3].noise_power_dB -100
+      --channelmod.modellist_rfsimu_1.[3].type ${SAT:-SAT_LEO_TRANS} --channelmod.modellist_rfsimu_1.[3].sat_trace_file /oai-ran/tools/ntn/data/${SAT_TRACE3:-orbital_trace_s_300.csv}
+      --channelmod.modellist_rfsimu_1.[3].pos_ue_x -3310204.0 --channelmod.modellist_rfsimu_1.[3].pos_ue_y -5006785.1
+      --channelmod.modellist_rfsimu_1.[3].pos_ue_z 2157610.7 --channelmod.modellist_rfsimu_1.[3].pos_gnb_x -3310204.0
+      --channelmod.modellist_rfsimu_1.[3].pos_gnb_y -5006785.1 --channelmod.modellist_rfsimu_1.[3].pos_gnb_z 2157610.7
       ${SAT_CLOCK:-}
 
 x-gnb: &gnb
@@ -59,9 +65,10 @@ x-gnb: &gnb
       --gNBs.[0].servingCellConfigCommon.[0].velocityVX-r17 68227
       --gNBs.[0].servingCellConfigCommon.[0].velocityVY-r17 -28078
       --gNBs.[0].servingCellConfigCommon.[0].velocityVZ-r17 99057
-      --gNBs.[0].neighbour_list.[0].nr_cellid $$CELL $$(for k in gNB_ID:$$PEER_ID nr_cellid:$$PEER_CELL physical_cellId:$$PEER_PCI
-      absoluteFrequencySSB:497770 subcarrierSpacing:0 band:254 tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
-      do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[0].$${k%%:*} $${k#*:}; done)
+      --gNBs.[0].neighbour_list.[0].nr_cellid $$CELL $$(j=0; for n in $$NEIGHBOURS; do IFS=/ read id cell pci <<< $$n;
+      for k in gNB_ID:$$id nr_cellid:$$cell physical_cellId:$$pci absoluteFrequencySSB:497770 subcarrierSpacing:0 band:254
+      tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
+      do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[$$j].$${k%%:*} $${k#*:}; done; j=$$((j + 1)); done)
       --MACRLCs.[0].dl_max_mcs ${MAX_MCS:-27} --MACRLCs.[0].ul_max_mcs ${MAX_MCS:-27} --pdcp.drb.discard_timer ${DISCARD_TIMER:-ms300}
       --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450}
       --gNBs.[0].Xn_INTERFACE.gnb_ipv4_address_for_xnc $$IP $$XN_DIAL
@@ -105,10 +112,8 @@ services:
       PCI: ${GNB1_PCI:-0}
       SSB: ${GNB1_SSB:-1}
       ROOT: 1
-      PEER_ID: "0xe01"
+      NEIGHBOURS: 0xe01/12345679/${GNB2_PCI:-1} ${GNB1_NEIGHBOURS:-}
       XN_DIAL: ""
-      PEER_CELL: 12345679
-      PEER_PCI: ${GNB2_PCI:-1}
       RFSIM: ${GNB1_RFSIM:-server}
       TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE1:-orbital_trace_s_300.csv}
       EXTRA: ${GNB1_EXTRA:-}
@@ -128,13 +133,33 @@ services:
       PCI: ${GNB2_PCI:-1}
       SSB: ${GNB2_SSB:-2}
       ROOT: 40
-      PEER_ID: "0xe00"
+      NEIGHBOURS: 0xe00/12345678/${GNB1_PCI:-0}
       XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip 172.22.0.70
-      PEER_CELL: 12345678
-      PEER_PCI: ${GNB1_PCI:-0}
       RFSIM: ${GNB2_RFSIM:-172.22.0.71}
       TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE2:-orbital_trace_s_300.csv}
       EXTRA: ${GNB2_EXTRA:-}
+
+  # third gNB (THREE_SAT=1), a second CHO candidate of gNB1
+  ntn-gnb3:
+    <<: *gnb
+    container_name: ntn-gnb3
+    cpuset: "12-15"
+    working_dir: /build/run/ntn-gnb3
+    networks:
+      core: {ipv4_address: 172.22.0.73}
+    environment:
+      <<: *env
+      IP: 172.22.0.73
+      GNB_ID: "0xe02"
+      CELL: 12345680
+      PCI: 2
+      SSB: 4
+      ROOT: 80
+      NEIGHBOURS: 0xe00/12345678/${GNB1_PCI:-0}
+      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip 172.22.0.70
+      RFSIM: 172.22.0.71
+      TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE3:-orbital_trace_s_300.csv}
+      EXTRA: ${GNB3_EXTRA:-}
 
 networks:
   core:
