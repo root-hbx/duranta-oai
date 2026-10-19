@@ -1604,8 +1604,9 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
 
   const nr_rrc_cell_container_t *cell = get_previous_cell_by_pci_in_du(rrc, current_cell, du, (uint16_t)physCellId);
   if (cell == NULL) {
-    LOG_E(NR_RRC, "received CCCH message, but no corresponding cell found for PCI %ld in DU (assoc_id %d)\n", physCellId, assoc_id);
-    return;
+    // the previous cell is not one of this DU (e.g., of another gNB): the UE context cannot be retrieved
+    LOG_E(NR_RRC, "no cell with PCI %ld in DU (assoc_id %d), fallback to RRC setup\n", physCellId, assoc_id);
+    goto fallback_rrc_setup;
   }
 
   /* TS 38.331 §5.3.7.1: retrieve UE context (C-RNTI + physCellId): if it cannot be
