@@ -260,6 +260,32 @@ int rrc_gNB_trigger_cho(char *buf, int debug, telnet_printfunc_t prnt)
   return 0;
 }
 
+/** @brief Replace the conditional handover candidates of a UE
+ *  @param buf: RRC UE ID, optionally a new condEventT1 window: t1-Threshold (10 ms since 1900), duration (100 ms) */
+int rrc_gNB_replace_cho(char *buf, int debug, telnet_printfunc_t prnt)
+{
+  UNUSED(debug);
+  if (!RC.nrrrc)
+    ERROR_MSG_RET("no RRC present\n");
+  if (!buf)
+    ERROR_MSG_RET("Please provide the UE ID\n");
+  char *token = strtok(buf, ",");
+  uint32_t ue_id = strtol(token, NULL, 10);
+  uint64_t t1_threshold = 0;
+  long t1_duration = 0;
+  if ((token = strtok(NULL, ","))) {
+    t1_threshold = strtoull(token, NULL, 10);
+    if (!(token = strtok(NULL, ",")))
+      ERROR_MSG_RET("Missing condEventT1 duration\n");
+    t1_duration = strtol(token, NULL, 10);
+    if (t1_duration < 1 || t1_duration > 6000)
+      ERROR_MSG_RET("condEventT1 duration out of range (1..6000)\n");
+  }
+  nr_HO_Xn_CHO_replace_telnet(RC.nrrrc[0], ue_id, t1_threshold, t1_duration);
+  prnt("RRC conditional handover replacement triggered for UE %u\n", ue_id);
+  return 0;
+}
+
 /** @brief Trigger Xn handover for UE, as rrc_gNB_trigger_n2_ho() */
 int rrc_gNB_trigger_xn_ho(char *buf, int debug, telnet_printfunc_t prnt)
 {
@@ -478,6 +504,7 @@ static telnetshell_cmddef_t cicmds[] = {
     {"trigger_n2_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_n2_ho},
     {"trigger_xn_ho", "[neighbour_pci(uint32_t),ueId(uint32_t)]", rrc_gNB_trigger_xn_ho},
     {"trigger_cho", "[ueId(uint32_t),candidate_pci(uint32_t)...]", rrc_gNB_trigger_cho},
+    {"replace_cho", "[ueId(uint32_t)[,t1_threshold(uint64_t),t1_duration(long)]]", rrc_gNB_replace_cho},
     {"set_pusch_target_snr", "[somelongSNR(dec)]", set_pusch_target_snr},
     {"pdu_session_release", "[gNB_ue_ngap_id(int,opt)]", trigger_ngap_pdu_session_release},
     {"", "", NULL},

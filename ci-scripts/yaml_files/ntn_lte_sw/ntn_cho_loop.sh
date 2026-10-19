@@ -6,6 +6,8 @@
 #   T1, T1_DUR (120, 30)  condEventT1 window
 #   BEAM, RAMP (122, 10)  the UE moves from the sat 0 beam to the sat 1 one in RAMP s: the gains of the cells cross in
 #                 STEP dB steps (default 4), from sat 1 NBR_ATT dB weaker to sat 0 NBR_ATT dB weaker; condEventA3 follows
+#   REPLACE  if set, the source replaces the prepared candidate then (ci replace_cho), with the T1 window
+#     REPLACE_T1="<start>,<duration>" (s) if set
 #   END (165)  last check
 # CHO recovery (attemptCondReconfig) after a radio link failure in the source: no condEventA3 before it (15 dB, 5.12 s)
 #   GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.attempt_cond_reconfig 1 --gNBs.[0].nr_cho_configuration.a3_offset 30
@@ -22,8 +24,11 @@ out=$repo/build/pcap-ntn-cho/$mode-$(date +%m%d-%H%M%S); mkdir -p $out
 N=${1:-10} PREP=${PREP:-100} T1=${T1:-120} T1_DUR=${T1_DUR:-30} BEAM=${BEAM:-122} RAMP=${RAMP:-10} END=${END:-165}
 U0=1792306580000  # UTC (ms since 1970) of the trace start
 # condEventT1: t1-Threshold in 10 ms since 1900, duration in 100 ms
-export GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.t1_threshold $(( (U0 + 2208988800000 + T1 * 1000) / 10 ))
+t1_threshold() { echo $(( (U0 + 2208988800000 + $1 * 1000) / 10 )); }
+export GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.t1_threshold $(t1_threshold $T1)
   --gNBs.[0].nr_cho_configuration.t1_duration $(( T1_DUR * 10 )) $GNB1_EXTRA"
+replace_arg=1
+if [ -n "$REPLACE_T1" ]; then replace_arg="1,$(t1_threshold ${REPLACE_T1%,*}),$(( ${REPLACE_T1#*,} * 10 ))"; fi
 
 trace_time() { tn nr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
 wait_trace() { while awk "BEGIN { exit !($(trace_time) < $1) }"; do sleep 0.2; done; }
@@ -34,6 +39,7 @@ for k in $(seq $N); do
   for i in 1 2 3; do ./ntn.sh connected > $out/logs/$k/connected.txt 2>&1 && break; done
   docker exec -d nr-ue sh -c "ping -D -I oaitun_ue1 -i 0.2 -W 1 192.168.96.1 > /tmp/ping.txt"
   wait_trace $PREP; tn ntn-gnb1 "ci trigger_cho 1,1" > /dev/null
+  if [ -n "$REPLACE" ]; then wait_trace $REPLACE; tn ntn-gnb1 "ci replace_cho $replace_arg" > /dev/null; fi
   wait_trace $BEAM; a=${NBR_ATT:-20}
   for x in $(seq 0 ${STEP:-4} $a); do wait_trace $(awk "BEGIN { print $BEAM + $x * $RAMP / $a }"); gains -$x -$((a - x)) > /dev/null 2>&1; done
   wait_trace $END
@@ -44,7 +50,9 @@ for k in $(seq $N); do
   exe=$(grep -m1 'CHO: execute candidate' $out/logs/$k/nr-ue.log || true)
   done_=$(grep -m1 'Xn handover complete' $out/logs/$k/ntn-gnb2.log || true)
   res=FAIL t_exe=- intr=-
-  if [ -n "$exe" ] && [ -n "$done_" ]; then
+  replaced=y
+  [ -n "$REPLACE" ] && ! grep -q 'conditional handover modification' $out/logs/$k/ntn-gnb1.log && replaced=
+  if [ -n "$exe" ] && [ -n "$done_" ] && [ -n "$replaced" ]; then
     res=OK
     # "now <hfn>.<frame> HFN.frame": the UE starts the trace clock at HFN 0, frame 0
     t_exe=$(sed -n 's/.*now \([0-9]*\)\.\([0-9]*\) HFN.frame.*/\1 \2/p' <<< "$exe" | awk '{ printf "%.2f", $1 * 10.24 + $2 / 100 }')
@@ -57,7 +65,7 @@ for k in $(seq $N); do
 done
 reset
 
-{ echo "$mode: $(grep -c ' OK ' $out/results.txt)/$N CHO OK (PREP $PREP s, T1 $T1-$((T1 + T1_DUR)) s, BEAM $BEAM s + $RAMP s)"
+{ echo "$mode: $(grep -c ' OK ' $out/results.txt)/$N CHO OK (PREP $PREP s, T1 $T1-$((T1 + T1_DUR)) s, BEAM $BEAM s + $RAMP s${REPLACE:+, REPLACE $REPLACE s ${REPLACE_T1:+T1 $REPLACE_T1}})"
   awk '$2 == "OK" { n++; t += $3; i += $4; if ($4 > im) im = $4 } { g += $5; if ($5 > gm) gm = $5 }
     END { if (n) printf "execution at %.1f s, interruption mean %.0f ms max %.0f ms\n", t / n, i / n, im
       printf "largest ping gap mean %.1f s max %.1f s\n", g / NR, gm }' $out/results.txt

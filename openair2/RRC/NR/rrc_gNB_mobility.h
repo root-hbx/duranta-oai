@@ -33,9 +33,10 @@ typedef struct {
   /// Xn association to the candidate gNB and its UE XnAP ID
   sctp_assoc_t xn_assoc_id;
   uint32_t xn_target_ue_id;
-  /// condReconfigId, and the measIds of its execution condition
+  /// condReconfigId (0: not configured at the UE), and the measIds/reportConfigIds of its execution condition
   long cond_reconfig_id;
   long meas_id[2];
+  long report_config_id[2];
   int num_meas_id;
   /// condRRCReconfig: the RRCReconfiguration of the candidate's Handover Command
   byte_array_t rrc_reconfig;
@@ -69,6 +70,10 @@ typedef struct nr_ho_source_cu {
   /// candidate the UE accessed
   bool cho;
   bool cho_config_sent;
+  /// condEventT1 window of the UE (t1-Threshold 0: none); a CHO replacement may move it
+  uint64_t t1_threshold;
+  long t1_duration;
+  bool t1_modified;
   int num_cho;
   nr_cho_candidate_t cho_cand[NR_MAX_CHO_CANDIDATES];
   /// the source DU released the UE (CHO: the UE left without handover command at the DU)

@@ -201,13 +201,14 @@ static nr_rrc_cell_container_t *xn_ho_source_cell(gNB_RRC_INST *rrc, gNB_RRC_UE_
 }
 
 /** @brief HANDOVER REQUEST (38.423 8.2.1) to the gNB of a neighbour cell, over the Xn association assoc_id,
- * for a conditional handover if cho */
+ * for the conditional handover candidate cho if not NULL: to replace its prepared conditional handover if replace */
 static bool send_xn_handover_request(gNB_RRC_INST *rrc,
                                      gNB_RRC_UE_t *ue,
                                      const nr_rrc_cell_container_t *source_cell,
                                      const nr_neighbour_cell_t *neighbour,
                                      sctp_assoc_t assoc_id,
-                                     bool cho)
+                                     const nr_cho_candidate_t *cho,
+                                     bool replace)
 {
   byte_array_t hoPrepInfo = rrc_gNB_generate_HandoverPreparationInformation(rrc, ue);
   if (!hoPrepInfo.buf || (ssize_t)hoPrepInfo.len <= 0) {
@@ -226,12 +227,17 @@ static bool send_xn_handover_request(gNB_RRC_INST *rrc,
   if (cho) {
     req->cho_info = calloc_or_fail(1, sizeof(*req->cho_info));
     req->cho_info->trigger = XNAP_CHO_INITIATION;
+    if (replace) {
+      req->cho_info->trigger = XNAP_CHO_REPLACE;
+      req->cho_info->t_ng_node_ue_xnap_id = malloc_or_fail(sizeof(*req->cho_info->t_ng_node_ue_xnap_id));
+      *req->cho_info->t_ng_node_ue_xnap_id = cho->xn_target_ue_id;
+    }
     // 38.300 16.14.3.2.2: the source may signal the time-based trigger to the target
-    const nr_cho_configuration_t *cfg = &rrc->cho_configuration;
-    if (cfg->t1_threshold) {
+    const nr_ho_source_cu_t *source = ue->ho_context->source;
+    if (source->t1_threshold) {
       req->cho_info->time_based = calloc_or_fail(1, sizeof(*req->cho_info->time_based));
-      req->cho_info->time_based->start = cfg->t1_threshold;
-      req->cho_info->time_based->duration = cfg->t1_duration;
+      req->cho_info->time_based->start = source->t1_threshold;
+      req->cho_info->time_based->duration = source->t1_duration;
     }
   }
 
@@ -279,7 +285,7 @@ static bool send_xn_handover_request(gNB_RRC_INST *rrc,
   LOG_I(NR_RRC,
         "UE %u: Xn %shandover preparation, send Handover Request (target gNB ID=%d, PCI=%d, NCC %ld)\n",
         ue->rrc_ue_id,
-        cho ? "conditional " : "",
+        replace ? "conditional (replacement) " : cho ? "conditional " : "",
         neighbour->gNB_ID,
         neighbour->physicalCellId,
         ctx->as_security_ncc);
@@ -301,7 +307,7 @@ void nr_rrc_trigger_xn_ho(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, const nr_neighbou
   source->ho_status_transfer = rrc_gNB_send_xn_sn_status_transfer;
   source->ho_cancel = nr_rrc_xn_ho_cancel;
   source->xn_assoc_id = assoc_id;
-  if (!send_xn_handover_request(rrc, ue, source_cell, neighbour, assoc_id, false))
+  if (!send_xn_handover_request(rrc, ue, source_cell, neighbour, assoc_id, NULL, false))
     nr_rrc_finalize_ho(ue);
 }
 
@@ -318,6 +324,8 @@ void nr_rrc_trigger_xn_cho(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, const nr_neighbo
   source->cho = true;
   source->ho_status_transfer = rrc_gNB_send_xn_sn_status_transfer;
   source->ho_cancel = nr_rrc_xn_cho_cancel;
+  source->t1_threshold = rrc->cho_configuration.t1_threshold;
+  source->t1_duration = rrc->cho_configuration.t1_duration;
   for (int i = 0; i < num_cells && source->num_cho < NR_MAX_CHO_CANDIDATES; i++) {
     const sctp_assoc_t assoc_id = rrc_get_xn_assoc_id(rrc, cells[i]->gNB_ID);
     if (assoc_id == 0) {
@@ -330,13 +338,61 @@ void nr_rrc_trigger_xn_cho(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, const nr_neighbo
     }
     nr_cho_candidate_t *c = &source->cho_cand[source->num_cho];
     *c = (nr_cho_candidate_t){.state = CHO_CAND_PREPARING, .cell = *cells[i], .xn_assoc_id = assoc_id};
-    if (send_xn_handover_request(rrc, ue, source_cell, cells[i], assoc_id, true))
+    if (send_xn_handover_request(rrc, ue, source_cell, cells[i], assoc_id, c, false))
       source->num_cho++;
   }
   if (source->num_cho == 0) {
     LOG_E(NR_RRC, "UE %u: no conditional handover candidate could be prepared\n", ue->rrc_ue_id);
     nr_rrc_finalize_ho(ue);
   }
+}
+
+/** @brief Replace the prepared conditional handovers of a UE (38.423 8.2.1.2, CHO-replace): HANDOVER REQUEST to
+ * each candidate, the target replaces its prepared conditional handover. A new condEventT1 window (t1_threshold not 0)
+ * is signalled to the targets and, with the new configurations of the candidates, to the UE. */
+void nr_rrc_replace_xn_cho(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue, uint64_t t1_threshold, long t1_duration)
+{
+  nr_ho_source_cu_t *source = ue->ho_context ? ue->ho_context->source : NULL;
+  if (!source || !source->cho || !source->cho_config_sent || source->xn_assoc_id != 0) {
+    LOG_E(NR_RRC, "UE %u: no conditional handover configured to replace\n", ue->rrc_ue_id);
+    return;
+  }
+  for (int i = 0; i < source->num_cho; i++) {
+    if (source->cho_cand[i].state == CHO_CAND_PREPARING) {
+      LOG_E(NR_RRC, "UE %u: conditional handover preparation ongoing, cannot replace\n", ue->rrc_ue_id);
+      return;
+    }
+  }
+  if (t1_threshold) {
+    if (!source->t1_threshold) {
+      LOG_E(NR_RRC, "UE %u: no condEventT1 configured, the window cannot move\n", ue->rrc_ue_id);
+      return;
+    }
+    source->t1_modified = t1_threshold != source->t1_threshold || t1_duration != source->t1_duration;
+    source->t1_threshold = t1_threshold;
+    source->t1_duration = t1_duration;
+  }
+  int n = 0;
+  for (int i = 0; i < source->num_cho; i++) {
+    nr_cho_candidate_t *c = &source->cho_cand[i];
+    if (c->state != CHO_CAND_PREPARED)
+      continue;
+    if (send_xn_handover_request(rrc, ue, source->cell, &c->cell, c->xn_assoc_id, c, true)) {
+      c->state = CHO_CAND_PREPARING;
+      n++;
+    }
+  }
+  LOG_I(NR_RRC, "UE %u: replace %d conditional handover candidate(s)\n", ue->rrc_ue_id, n);
+}
+
+static NR_CondTriggerConfig_r16_t *get_cond_t1(uint64_t t1_threshold, long t1_duration)
+{
+  NR_CondTriggerConfig_r16_t *t1 = calloc_or_fail(1, sizeof(*t1));
+  t1->condEventId.present = NR_CondTriggerConfig_r16__condEventId_PR_condEventT1_r17;
+  asn1cCalloc(t1->condEventId.choice.condEventT1_r17, ev_t1);
+  asn_uint642INTEGER(&ev_t1->t1_Threshold_r17, t1_threshold);
+  ev_t1->duration_r17 = t1_duration;
+  return t1;
 }
 
 static NR_ReportConfigToAddMod_t *get_cond_report_config(long id, NR_CondTriggerConfig_r16_t *cond)
@@ -367,6 +423,88 @@ static long get_meas_object_id(const NR_MeasConfig_t *mc, int pci)
   return -1;
 }
 
+/** @brief Source: once all the replaced candidates answered, RRCReconfiguration with the conditional reconfiguration
+ * modification (38.331 5.3.5.13.3): the new condRRCReconfig of each candidate under the same condReconfigId, the
+ * condEventT1 reportConfigs modified if the window moved, and the removal of the candidates whose replacement failed */
+static void nr_rrc_cho_send_replacement(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
+{
+  nr_ho_source_cu_t *source = UE->ho_context->source;
+  NR_MeasConfig_t *mc = calloc_or_fail(1, sizeof(*mc));
+  NR_ConditionalReconfiguration_r16_t *cr = calloc_or_fail(1, sizeof(*cr));
+  // attemptCondReconfig (Need R) is signalled again
+  if (rrc->cho_configuration.attempt_cond_reconfig) {
+    cr->attemptCondReconfig_r16 = calloc_or_fail(1, sizeof(*cr->attemptCondReconfig_r16));
+    *cr->attemptCondReconfig_r16 = NR_ConditionalReconfiguration_r16__attemptCondReconfig_r16_true;
+  }
+  int num_cand = 0;
+  for (int i = 0; i < source->num_cho; i++) {
+    nr_cho_candidate_t *c = &source->cho_cand[i];
+    if (c->cond_reconfig_id == 0)
+      continue;
+    if (c->state == CHO_CAND_FAILED) {
+      // the target removed the prepared conditional handover: removal of the candidate and its execution condition
+      if (!cr->condReconfigToRemoveList_r16)
+        cr->condReconfigToRemoveList_r16 = calloc_or_fail(1, sizeof(*cr->condReconfigToRemoveList_r16));
+      asn1cSequenceAdd(cr->condReconfigToRemoveList_r16->list, NR_CondReconfigId_r16_t, id);
+      *id = c->cond_reconfig_id;
+      if (!mc->measIdToRemoveList) {
+        mc->measIdToRemoveList = calloc_or_fail(1, sizeof(*mc->measIdToRemoveList));
+        mc->reportConfigToRemoveList = calloc_or_fail(1, sizeof(*mc->reportConfigToRemoveList));
+      }
+      for (int k = 0; k < c->num_meas_id; k++) {
+        asn1cSequenceAdd(mc->measIdToRemoveList->list, NR_MeasId_t, meas_id);
+        *meas_id = c->meas_id[k];
+        asn1cSequenceAdd(mc->reportConfigToRemoveList->list, NR_ReportConfigId_t, rc_id);
+        *rc_id = c->report_config_id[k];
+      }
+      LOG_I(NR_RRC, "UE %u: CHO candidate %ld PCI %d removed\n", UE->rrc_ue_id, c->cond_reconfig_id, c->cell.physicalCellId);
+      c->cond_reconfig_id = 0;
+      continue;
+    }
+    if (source->t1_modified && c->num_meas_id > 1) {
+      if (!mc->reportConfigToAddModList)
+        mc->reportConfigToAddModList = calloc_or_fail(1, sizeof(*mc->reportConfigToAddModList));
+      NR_CondTriggerConfig_r16_t *t1 = get_cond_t1(source->t1_threshold, source->t1_duration);
+      asn1cSeqAdd(&mc->reportConfigToAddModList->list, get_cond_report_config(c->report_config_id[1], t1));
+    }
+    if (!cr->condReconfigToAddModList_r16)
+      cr->condReconfigToAddModList_r16 = calloc_or_fail(1, sizeof(*cr->condReconfigToAddModList_r16));
+    asn1cSequenceAdd(cr->condReconfigToAddModList_r16->list, NR_CondReconfigToAddMod_r16_t, add);
+    add->condReconfigId_r16 = c->cond_reconfig_id;
+    asn1cCalloc(add->condRRCReconfig_r16, rec);
+    OCTET_STRING_fromBuf(rec, (const char *)c->rrc_reconfig.buf, c->rrc_reconfig.len);
+    LOG_I(NR_RRC, "UE %u: CHO candidate %ld PCI %d replaced\n", UE->rrc_ue_id, c->cond_reconfig_id, c->cell.physicalCellId);
+    num_cand++;
+  }
+  const bool meas = mc->measIdToRemoveList || mc->reportConfigToAddModList;
+  if (meas || cr->condReconfigToAddModList_r16 || cr->condReconfigToRemoveList_r16) {
+    const uint8_t xid = rrc_gNB_get_next_transaction_identifier(rrc->module_id);
+    UE->xids[xid] = RRC_DEDICATED_RECONF;
+    byte_array_t buf = do_RRCReconfiguration_cho(xid, meas ? mc : NULL, cr);
+    LOG_A(NR_RRC,
+          "UE %u: send conditional handover modification, %d candidate(s) replaced%s, T1 window %lu + %ld x 100 ms\n",
+          UE->rrc_ue_id,
+          num_cand,
+          source->t1_modified ? " (T1 window moved)" : "",
+          source->t1_threshold,
+          source->t1_duration);
+    nr_rrc_transfer_protected_rrc_message(rrc,
+                                          UE,
+                                          DL_SCH_LCID_DCCH,
+                                          NR_DL_DCCH_MessageType__c1_PR_rrcReconfiguration,
+                                          buf.buf,
+                                          buf.len);
+    free_byte_array(buf);
+  }
+  source->t1_modified = false;
+  ASN_STRUCT_FREE(asn_DEF_NR_MeasConfig, mc);
+  ASN_STRUCT_FREE(asn_DEF_NR_ConditionalReconfiguration_r16, cr);
+  if (num_cand == 0) {
+    LOG_E(NR_RRC, "UE %u: no conditional handover candidate left\n", UE->rrc_ue_id);
+    nr_rrc_finalize_ho(UE);
+  }
+}
+
 /** @brief Source: once all the candidates answered, RRCReconfiguration with the prepared candidates and
  * their execution condition (38.331 5.3.5.13): condEventA3, with condEventT1 if configured (TS 38.331 CondReconfigToAddMod:
  * T1 only together with A3), both on the measurement object of the candidate cell */
@@ -377,8 +515,10 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
     if (source->cho_cand[i].state == CHO_CAND_PREPARING)
       return;
   }
-  if (source->cho_config_sent)
+  if (source->cho_config_sent) {
+    nr_rrc_cho_send_replacement(rrc, UE);
     return;
+  }
   source->cho_config_sent = true;
   const nr_cho_configuration_t *cfg = &rrc->cho_configuration;
   NR_MeasConfig_t *mc = calloc_or_fail(1, sizeof(*mc));
@@ -421,15 +561,10 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
     ev_a3->a3_Offset.choice.rsrp = cfg->a3_offset;
     ev_a3->hysteresis = cfg->a3_hysteresis;
     ev_a3->timeToTrigger = cfg->a3_time_to_trigger;
+    // condEventA3 first, then condEventT1
     NR_CondTriggerConfig_r16_t *conds[2] = {a3, NULL};
-    if (cfg->t1_threshold) {
-      NR_CondTriggerConfig_r16_t *t1 = calloc_or_fail(1, sizeof(*t1));
-      t1->condEventId.present = NR_CondTriggerConfig_r16__condEventId_PR_condEventT1_r17;
-      asn1cCalloc(t1->condEventId.choice.condEventT1_r17, ev_t1);
-      asn_uint642INTEGER(&ev_t1->t1_Threshold_r17, cfg->t1_threshold);
-      ev_t1->duration_r17 = cfg->t1_duration;
-      conds[1] = t1;
-    }
+    if (source->t1_threshold)
+      conds[1] = get_cond_t1(source->t1_threshold, source->t1_duration);
 
     asn1cSequenceAdd(cr->condReconfigToAddModList_r16->list, NR_CondReconfigToAddMod_r16_t, add);
     add->condReconfigId_r16 = c->cond_reconfig_id;
@@ -437,6 +572,7 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
     for (int k = 0; k < 2 && conds[k]; k++) {
       NR_ReportConfigToAddMod_t *rc = get_cond_report_config(allocate_report_config_id(UE), conds[k]);
       asn1cSeqAdd(&mc->reportConfigToAddModList->list, rc);
+      c->report_config_id[c->num_meas_id] = rc->reportConfigId;
       c->meas_id[c->num_meas_id] = allocate_measurement_id(UE);
       asn1cSeqAdd(&mc->measIdToAddModList->list, get_MeasId(c->meas_id[c->num_meas_id], rc->reportConfigId, mo_id));
       asn1cSequenceAdd(exec->list, NR_MeasId_t, meas_id);
@@ -451,7 +587,7 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
           c->cell.physicalCellId,
           cfg->a3_offset / 2.0,
           cfg->a3_hysteresis / 2.0,
-          cfg->t1_threshold ? " and condEventT1" : "",
+          source->t1_threshold ? " and condEventT1" : "",
           c->meas_id[0],
           c->num_meas_id > 1 ? c->meas_id[1] : 0);
   }
@@ -463,14 +599,14 @@ static void nr_rrc_cho_send_configuration(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
     const uint8_t xid = rrc_gNB_get_next_transaction_identifier(rrc->module_id);
     UE->xids[xid] = RRC_DEDICATED_RECONF;
     byte_array_t buf = do_RRCReconfiguration_cho(xid, mc, cr);
-    if (cfg->t1_threshold)
+    if (source->t1_threshold)
       LOG_A(
           NR_RRC,
           "UE %u: send conditional handover configuration, %d candidate(s), T1 window %lu + %ld x 100 ms (UTC 10 ms since 1900)\n",
           UE->rrc_ue_id,
           cr->condReconfigToAddModList_r16->list.count,
-          cfg->t1_threshold,
-          cfg->t1_duration);
+          source->t1_threshold,
+          source->t1_duration);
     else
       LOG_A(NR_RRC,
             "UE %u: send conditional handover configuration, %d candidate(s)\n",
@@ -511,6 +647,7 @@ static void rrc_gNB_process_xn_handover_req_ack(gNB_RRC_INST *rrc, const xnap_ha
       return;
     }
     c->xn_target_ue_id = m->msg.t_ng_node_ue_xnap_id;
+    free_byte_array(c->rrc_reconfig);
     c->rrc_reconfig = get_RRCReconfiguration_from_HandoverCommand(m->msg.target2source);
     c->state = c->rrc_reconfig.len > 0 ? CHO_CAND_PREPARED : CHO_CAND_FAILED;
     LOG_I(NR_RRC,
@@ -768,6 +905,27 @@ static byte_array_t get_ue_cap_from_ho_prep_info(byte_array_t hpi)
   return cap;
 }
 
+/** @brief Target: CHO-replace (38.423 8.2.1.2), remove the prepared conditional handover identified by the Target
+ * NG-RAN node UE XnAP ID and the target cell, before preparing the new one
+ * @return false if no such conditional handover was prepared over this UE-associated signalling (8.2.1.4) */
+static bool remove_replaced_cho(gNB_RRC_INST *rrc, const xnap_handover_req_itti_t *m)
+{
+  const xnap_cho_info_req_t *cho = m->msg.cho_info;
+  rrc_gNB_ue_context_t *ue_context_p = cho->t_ng_node_ue_xnap_id ? rrc_gNB_get_ue_context(rrc, *cho->t_ng_node_ue_xnap_id) : NULL;
+  const nr_handover_context_t *ho = ue_context_p ? ue_context_p->ue_context.ho_context : NULL;
+  const nr_ho_target_cu_t *target = ho ? ho->target : NULL;
+  if (!target || !target->cho || target->xn_assoc_id != m->assoc_id || target->xn_source_ue_id != m->msg.s_ng_node_ue_xnap_id
+      || target->cell->info.cell_id != m->msg.target_cgi.nrcell_id) {
+    LOG_E(NR_RRC,
+          "Xn Handover Request CHO-replace: no conditional handover prepared for target UE XnAP ID %d\n",
+          cho->t_ng_node_ue_xnap_id ? (int)*cho->t_ng_node_ue_xnap_id : -1);
+    return false;
+  }
+  LOG_I(NR_RRC, "UE %u: conditional handover replaced by the source, release the prepared UE\n", ue_context_p->ue_context.rrc_ue_id);
+  rrc_gNB_xn_release_ue(rrc, ue_context_p);
+  return true;
+}
+
 /** @brief Target: HANDOVER REQUEST (38.423 8.2.1.2), admission and preparation of the UE context */
 static void rrc_gNB_process_xn_handover_request(gNB_RRC_INST *rrc, const xnap_handover_req_itti_t *m)
 {
@@ -779,6 +937,13 @@ static void rrc_gNB_process_xn_handover_request(gNB_RRC_INST *rrc, const xnap_ha
   if (cell == NULL) {
     LOG_E(NR_RRC, "Xn Handover Request: no cell with NR Cell ID=%lu\n", req->target_cgi.nrcell_id);
     send_xn_handover_prep_failure(rrc, assoc_id, req->s_ng_node_ue_xnap_id, XNAP_CAUSE_RADIO_NETWORK_LAYER_CELL_NOT_AVAILABLE);
+    return;
+  }
+  if (req->cho_info && req->cho_info->trigger == XNAP_CHO_REPLACE && !remove_replaced_cho(rrc, m)) {
+    send_xn_handover_prep_failure(rrc,
+                                  assoc_id,
+                                  req->s_ng_node_ue_xnap_id,
+                                  XNAP_CAUSE_RADIO_NETWORK_LAYER_UNKNOWN_LOCAL_NG_RAN_NODE_UE_XNAP_ID);
     return;
   }
   nr_rrc_du_container_t *du = get_du_by_assoc_id(rrc, cell->assoc_id);
@@ -1033,6 +1198,16 @@ void nr_HO_Xn_CHO_trigger_telnet(gNB_RRC_INST *rrc, const uint32_t *neighbour_pc
   LOG_I(NR_RRC, "UE %d: triggered conditional handover with %d candidate(s)\n", rrc_ue_id, n);
   if (n > 0)
     nr_rrc_trigger_xn_cho(rrc, &ue_context_p->ue_context, cells, n);
+}
+
+void nr_HO_Xn_CHO_replace_telnet(gNB_RRC_INST *rrc, uint32_t rrc_ue_id, uint64_t t1_threshold, long t1_duration)
+{
+  rrc_gNB_ue_context_t *ue_context_p = rrc_gNB_get_ue_context(rrc, rrc_ue_id);
+  if (ue_context_p == NULL) {
+    LOG_E(NR_RRC, "CHO replacement failed for UE %d: unknown UE\n", rrc_ue_id);
+    return;
+  }
+  nr_rrc_replace_xn_cho(rrc, &ue_context_p->ue_context, t1_threshold, t1_duration);
 }
 
 sctp_assoc_t rrc_get_xn_assoc_id(const gNB_RRC_INST *rrc, uint32_t gnb_id)
