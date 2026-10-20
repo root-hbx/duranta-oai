@@ -242,6 +242,22 @@ static void reset_neighboring_cell_info(fapi_nr_neighboring_cell_t *neighbor_cel
     neighbor_cell->Nid_cell = -1;
 }
 
+/* start of the PSS search window of a cell in the samples of a slot (with the headroom of create_meas_task_args()):
+ * the SSB of a cell of another satellite drifts in time (NTN), follow it into the next or previous slot */
+static void set_pss_search_start(const NR_DL_FRAME_PARMS *fp, neighboring_cell_info_t *info, int slot, int start)
+{
+  const int slot_len = get_samples_per_slot(slot, fp);
+  if (start >= slot_len) {
+    start -= slot_len;
+    slot = (slot + 1) % fp->slots_per_frame;
+  } else if (start < 0) {
+    slot = (slot + fp->slots_per_frame - 1) % fp->slots_per_frame;
+    start += get_samples_per_slot(slot, fp);
+  }
+  info->pss_search_start = start;
+  info->ssb_slot = slot;
+}
+
 static bool search_neighboring_cell(UE_nr_rxtx_proc_t *proc,
                                     NR_DL_FRAME_PARMS *frame_parms,
                                     fapi_nr_neighboring_cell_t *nr_neighboring_cell,
@@ -321,9 +337,8 @@ static bool search_neighboring_cell(UE_nr_rxtx_proc_t *proc,
           search_params.pss_res.avg);
 
     // Update search window
-    neighboring_cell_info->pss_search_start = search_params.pss_res.pos - 16;
+    set_pss_search_start(frame_parms, neighboring_cell_info, proc->nr_slot_rx, search_params.pss_res.pos - 16);
     neighboring_cell_info->pss_search_length = 32 + frame_parms->ofdm_symbol_size;
-    neighboring_cell_info->ssb_slot = proc->nr_slot_rx;
   }
 
   return cell_detected;
@@ -411,9 +426,8 @@ static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
   nr_neighboring_cell->is_candidate = false;
   neighboring_cell_info->consec_fail = 0;
   neighboring_cell_info->valid_meas = true;
-  neighboring_cell_info->pss_search_start += pss_res.pos - 16;
+  set_pss_search_start(frame_parms, neighboring_cell_info, slot, neighboring_cell_info->pss_search_start + pss_res.pos - 16);
   neighboring_cell_info->pss_search_length = 32 + frame_parms->ofdm_symbol_size;
-  neighboring_cell_info->ssb_slot = slot;
 
   return true;
 }
