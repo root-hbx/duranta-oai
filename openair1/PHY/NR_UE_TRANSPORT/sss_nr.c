@@ -64,6 +64,40 @@ static void init_context_sss_nr(int N_ID_2, int start_nid1, int nb_nid1, int16_t
   }
 }
 
+/* SS-RSRP of a known cell (TS 38.215 5.1.1): power per resource element of its SSS, from the correlation with its
+ * sequence in groups of NR_SSS_RSRP_GROUP subcarriers, an unbiased estimate that rejects other cells and noise:
+ * (|sum z|^2 - sum |z|^2) / (G (G - 1)), z = r d. total: power per resource element of the SSS subcarriers */
+#define NR_SSS_RSRP_GROUP 64
+double nr_sss_rsrp(int nb_antennas_rx,
+                   int ofdm_symbol_size,
+                   int ssb_start_subcarrier,
+                   int nid_cell,
+                   const c16_t rxdataF[nb_antennas_rx][ofdm_symbol_size],
+                   double *total)
+{
+  int16_t d[1][LENGTH_SSS_NR];
+  init_context_sss_nr(nid_cell % NUMBER_PSS_SEQUENCE, nid_cell / NUMBER_PSS_SEQUENCE, 1, d);
+  double signal = 0;
+  double power = 0;
+  for (int aarx = 0; aarx < nb_antennas_rx; aarx++) {
+    const c16_t *sss = rxdataF[aarx] + ssb_start_subcarrier + PSS_SSS_SUB_CARRIER_START;
+    for (int start = 0; start + NR_SSS_RSRP_GROUP <= LENGTH_SSS_NR; start += NR_SSS_RSRP_GROUP) {
+      cd_t sum = {0};
+      double energy = 0;
+      for (int n = start; n < start + NR_SSS_RSRP_GROUP; n++) {
+        sum.r += sss[n].r * d[0][n];
+        sum.i += sss[n].i * d[0][n];
+        energy += squaredMod(sss[n]);
+      }
+      signal += (squaredMod(sum) - energy) / (NR_SSS_RSRP_GROUP * (NR_SSS_RSRP_GROUP - 1));
+      power += energy / NR_SSS_RSRP_GROUP;
+    }
+  }
+  const int nb_groups = nb_antennas_rx * (LENGTH_SSS_NR / NR_SSS_RSRP_GROUP);
+  *total = power / nb_groups;
+  return signal / nb_groups;
+}
+
 // #define DEBUG_SSS_NR
 // #define DEBUG_PLOT_SSS
 

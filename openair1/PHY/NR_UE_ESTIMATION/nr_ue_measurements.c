@@ -344,13 +344,18 @@ static bool search_neighboring_cell(UE_nr_rxtx_proc_t *proc,
   return cell_detected;
 }
 
+/* the SSS of a measured cell is at least 1/NR_SSS_RSRP_MIN_RATIO of the power of its resource elements: otherwise,
+ * other signals (e.g., of the serving cell) at a false PSS peak */
+#define NR_SSS_RSRP_MIN_RATIO 32
+
 static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
                                fapi_nr_neighboring_cell_t *nr_neighboring_cell,
                                neighboring_cell_info_t *neighboring_cell_info,
                                c16_t **rxdata,
                                c16_t rxdataF[][frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
                                c16_t pssTime[][frame_parms->ofdm_symbol_size],
-                               int slot)
+                               int slot,
+                               double *rsrp)
 {
   int known_pci = nr_neighboring_cell->Nid_cell;
 
@@ -414,8 +419,17 @@ static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
                                             .exclude_nid_cells = NULL,
                                             .num_exclude_nid_cells = 0};
   sss_detection_result_t res = rx_sss_nr(&p_sss, &pss_res, known_pci, rxdataF);
+  double total = 0;
+  if (res.success) {
+    *rsrp = nr_sss_rsrp(frame_parms->nb_antennas_rx,
+                        frame_parms->ofdm_symbol_size,
+                        frame_parms->ssb_start_subcarrier,
+                        known_pci,
+                        rxdataF[sss_symbol],
+                        &total);
+  }
 
-  if (!res.success) {
+  if (!res.success || *rsrp <= 0 || *rsrp * NR_SSS_RSRP_MIN_RATIO < total) {
     if (neighboring_cell_info->valid_meas)
       neighboring_cell_info->consec_fail++;
     LOG_D(NR_PHY, "Known PCI validation failed for PCI=%d, consec_fail=%d\n", known_pci, neighboring_cell_info->consec_fail);
@@ -578,7 +592,8 @@ static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_N
 
     compensate_neighbour_freq_offset(ue, get_neighbour_freq_offset(ue, proc, neighbor_cell), rxdata_in, rxdata, rxdata_size);
 
-    if (!validate_known_pci(frame_parms, neighbor_cell, neighboring_cell_info, rxdata, rxdataF, pssTime, proc->nr_slot_rx)) {
+    double rsrp = 0;
+    if (!validate_known_pci(frame_parms, neighbor_cell, neighboring_cell_info, rxdata, rxdataF, pssTime, proc->nr_slot_rx, &rsrp)) {
       if (neighboring_cell_info->consec_fail >= NEIGHBOR_CELL_MAX_CONSECUTIVE_FAILURES) {
         if (neighbor_cell->is_candidate) {
           LOG_D(NR_PHY, "Neighbor cell confirmation failed for candidate with PCI=%d\n", neighbor_cell->Nid_cell);
@@ -594,11 +609,10 @@ static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_N
     }
 
     // RSRP measurements
-    uint8_t sss_symbol = SSS_SYMBOL_NB - PSS_SYMBOL_NB;
-    neighboring_cell_info->ssb_rsrp = nr_ue_calculate_ssb_rsrp(frame_parms, rxdataF[sss_symbol], frame_parms->ssb_start_subcarrier);
+    neighboring_cell_info->ssb_rsrp = rsrp;
 
     neighboring_cell_info->ssb_rsrp_dBm =
-        10 * log10(neighboring_cell_info->ssb_rsrp) + 30 - SQ15_SQUARED_NORM_FACTOR_DB
+        10 * log10(rsrp) + 30 - SQ15_SQUARED_NORM_FACTOR_DB
         - ((int)openair0_cfg_g[ue->rf_map.card].rx_gain[0] - (int)openair0_cfg_g[ue->rf_map.card].rx_gain_offset[0])
         - dB_fixed(ue->frame_parms.ofdm_symbol_size);
 
