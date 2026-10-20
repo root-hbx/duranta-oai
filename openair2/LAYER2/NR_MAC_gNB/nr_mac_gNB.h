@@ -302,6 +302,8 @@ typedef struct {
   nr_ra_type_t ra_type;
   /// CFRA flag
   bool cfra;
+  /// time-based CHO: error of the Common TA predicted over the T1 window (ns)
+  int cho_ta_err_ns;
 } NR_RA_t;
 
 /*! \brief gNB common channels */
@@ -1304,6 +1306,11 @@ typedef struct nr_cell_sched_s {
   /// Per-cell KPI statistics
   NR_du_stats_t du_stats;
   uint64_t num_scheduled_prach_rx;
+
+  /// NTN: how early a preamble may arrive (ns) without a time-based CHO, see config_prach_early_margin()
+  int prach_early_base_ns;
+  /// length of the zero correlation zone of a preamble (ns)
+  int prach_zone_ns;
 
   // Per-cell MAC function execution performance profiler
   /// processing time of gNB scheduler

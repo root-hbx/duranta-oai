@@ -115,13 +115,18 @@ static bool trace_position(const sat_trace_sample_t *tr, int n, double t, double
 // nr_ntn_ta_predictor_t: ta-Common (feeder link round trip) y(x) = d0 + drift * x + variant * x^2, x the time since the
 // epoch, exact at the Chebyshev nodes of the window (smallest maximum error). Within the TA-Info ranges of 38.331:
 // variant >= 0, else a line; drift clamped, then exact at the outer nodes.
-static bool predict_ta_common(uint64_t utc_start_ms, uint64_t utc_end_ms, gnb_sat_position_update_t *out, uint64_t *epoch_utc_ms)
+static bool predict_ta_common(uint64_t utc_start_ms,
+                              uint64_t utc_end_ms,
+                              gnb_sat_position_update_t *out,
+                              uint64_t *epoch_utc_ms,
+                              int *max_err_ns)
 {
   pthread_mutex_lock(&ta_pred.mutex);
   *out = ta_pred.epoch;
   const double t_epoch = ta_pred.t_epoch;
   pthread_mutex_unlock(&ta_pred.mutex);
   *epoch_utc_ms = ta_pred.utc_ms + t_epoch * 1000;
+  *max_err_ns = 0;
   if (!ta_pred.transparent)
     return true;
 
@@ -163,14 +168,19 @@ static bool predict_ta_common(uint64_t utc_start_ms, uint64_t utc_end_ms, gnb_sa
   out->drift = ta_drift;
   out->accel = ta_variant;
 
+  // error of what the UE computes from the SIB19 values
+  const double d0_q = ta_common * 4.072e-9;
+  const double drift_q = ta_drift * 0.2e-9;
+  const double variant_q = ta_variant * 0.2e-10;
   double max_err = 0;
   for (double t = t_start; t <= t_end; t += 0.5) {
     double pos_sat[3];
     trace_position(ta_pred.trace, ta_pred.len, t, pos_sat);
     const double xt = t - t_epoch;
-    const double err = d0 + drift * xt + variant * xt * xt - 2 * vec_dist(ta_pred.pos_gnb, pos_sat) / SPEED_OF_LIGHT;
+    const double err = d0_q + drift_q * xt + variant_q * xt * xt - 2 * vec_dist(ta_pred.pos_gnb, pos_sat) / SPEED_OF_LIGHT;
     max_err = fmax(max_err, fabs(err));
   }
+  *max_err_ns = ceil(max_err * 1e9);
   LOG_I(HW, "Common TA prediction for %.1f-%.1f s (trace time): max error %.3f us\n", t_start, t_end, max_err * 1e6);
   return true;
 }

@@ -70,7 +70,7 @@ x-gnb: &gnb
       tracking_area_code:1 plmn.mcc:1 plmn.mnc:1 plmn.mnc_length:2;
       do echo --gNBs.[0].neighbour_list.[0].neighbour_cell_configuration.[$$j].$${k%%:*} $${k#*:}; done; j=$$((j + 1)); done)
       --MACRLCs.[0].dl_max_mcs ${MAX_MCS:-27} --MACRLCs.[0].ul_max_mcs ${MAX_MCS:-27} --pdcp.drb.discard_timer ${DISCARD_TIMER:-ms300}
-      --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450} --L1s.[0].prach_early_margin ${PRACH_EARLY:-6}
+      --L1s.[0].prach_dtx_threshold ${PRACH_THRES:-450}
       --gNBs.[0].Xn_INTERFACE.gnb_ipv4_address_for_xnc $$IP $$XN_DIAL
       $$LOG $$OPT $$EXTRA
 

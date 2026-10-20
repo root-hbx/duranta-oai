@@ -256,6 +256,25 @@ bool get_next_nr_prach(spsc_q_t *q, const fsn_t *now, prach_item_t *p)
   return spsc_q_get_if(q, get_current_prach, (void *)now, p, sizeof(*p));
 }
 
+/* How early a preamble may arrive: the value of the MAC (UE timing error and network Common TA error), widened to
+ * 1.5 times the earliest arrival of the recent preambles if the MAC value turns out too small. */
+static int nr_prach_early_ns(const PHY_VARS_gNB *gNB)
+{
+  return max(gNB->prach_early_ff_ns, gNB->prach_early_obs_ns * 3 / 2);
+}
+
+void nr_prach_early_feedback(PHY_VARS_gNB *gNB, int delay_ns)
+{
+  int obs = gNB->prach_early_obs_ns - gNB->prach_early_obs_ns / 16;
+  if (-delay_ns > obs)
+    obs = -delay_ns;
+  const int old_ns = nr_prach_early_ns(gNB);
+  gNB->prach_early_obs_ns = obs;
+  const int new_ns = nr_prach_early_ns(gNB);
+  if (new_ns != old_ns)
+    LOG_D(NR_PHY_RACH, "PRACH early window %d -> %d ns (arrival %d ns, MAC %d ns)\n", old_ns, new_ns, delay_ns, gNB->prach_early_ff_ns);
+}
+
 void nr_schedule_rx_prach(PHY_VARS_gNB *gNB, int SFN, int Slot, nfapi_nr_prach_pdu_t *prach_pdu)
 {
   const int fmt = prach_pdu->prach_format;
@@ -275,7 +294,7 @@ void nr_schedule_rx_prach(PHY_VARS_gNB *gNB, int SFN, int Slot, nfapi_nr_prach_p
       .prach_sequence_length = cfg->prach_sequence_length.value,
       .restricted_set = cfg->restricted_set_config.value,
       .numerology_index = fp->numerology_index,
-      .early_margin = gNB->prach_early_margin,
+      .early_ns = nr_prach_early_ns(gNB),
       .nb_rx = num_rx_per_beam,
       .Xu = gNB->X_u,
       .rx_prach = &gNB->rx_prach,
@@ -416,17 +435,7 @@ static double prach_bin_ns(int prach_sequence_length, int prach_fmt, int mu)
   return 24576e9 / (30.72e6 * 1024);
 }
 
-// raw PRACH correlation-bin delay of a delay in TA units, inverse of the conversion at the end of rx_nr_prach()
-static int prach_ta_to_raw_delay(int ta, int prach_sequence_length, int prach_fmt, int mu)
-{
-  if (prach_sequence_length != 0)
-    return 2 * ta;
-  if (prach_fmt == 3)
-    return 8 * ta / (3 << mu);
-  return 2 * ta / (3 << mu);
-}
-
-/* The correlation window of each preamble starts early_margin before its zero delay: a UE that pre-compensates its
+/* The correlation window of each preamble starts early_ns before its zero delay: a UE that pre-compensates its
  * timing advance (NTN, 38.300 16.14.2.2) can arrive slightly early, which would otherwise fall between two zones or
  * into the end of another preamble's zone. The window keeps its length (no overlap with other zones), an early
  * preamble is reported with delay 0 and the residual is left to the TA commands after the access. */
@@ -468,8 +477,8 @@ rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
 
   if (NCS2 == 0)
     NCS2 = N_ZC;
-  const int early_bins = min(prach_ta_to_raw_delay(in->early_margin, in->prach_sequence_length, prach_fmt, in->numerology_index),
-                             NCS2 - 1);
+  const double bin_ns = prach_bin_ns(in->prach_sequence_length, prach_fmt, in->numerology_index);
+  const int early_bins = min((int)ceil(in->early_ns / bin_ns), NCS2 - 1);
 
   int preamble_offset = 0, preamble_offset_old = 99;
 
@@ -655,7 +664,7 @@ rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
   // By solving:
   // max_preamble_delay * ( (2048/2^mu*(fs/30.72M)) / 256 ) / fs = TA * 16 * 64 / 2^mu * Tc
   out.max_preamble_delay_raw = max(max_delay_bin, 0);
-  out.delay_ns = lround(max_delay_bin * prach_bin_ns(in->prach_sequence_length, prach_fmt, in->numerology_index));
+  out.delay_ns = lround(max_delay_bin * bin_ns);
   const uint32_t raw_delay = out.max_preamble_delay_raw;
   const int mu = in->numerology_index;
   if (in->prach_sequence_length == 0) {

@@ -406,6 +406,131 @@ int get_ul_slot_offset(const frame_structure_t *fs, int idx, bool count_mixed)
   return ul_slot_idxs[ul_slot_idx_in_period] + period_idx * fs->numb_slots_period;
 }
 
+// ntn-UlSyncValidityDuration-r17 (38.331 NTN-Config)
+static const int ntn_validity_s[] = {5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 120, 180, 240, 900};
+
+// Te_NTN (38.133 Table 7.1C.2-1, FR1) in ns, 0 if not specified
+static int get_te_ntn_ns(long ssb_scs, long ul_scs)
+{
+  // in 64*Tc, by SCS of SSB then of uplink signals (15, 30 kHz)
+  const int te[2][2] = {{29, 24}, {24, 22}};
+  if (ssb_scs > 1 || ul_scs > 1)
+    return 0;
+  return ceil(te[ssb_scs][ul_scs] * 64 * 1e9 / (480e3 * 4096));
+}
+
+/* Largest error of the delays a UE derives from the ntn-Config due to their quantisation (half a step of each value of
+ * 38.331 TA-Info and PositionVelocity), up to the end of ntn-UlSyncValidityDuration. */
+static int get_ntn_quantisation_ns(const NR_NTN_Config_r17_t *ntn)
+{
+  double t = 0;
+  if (ntn->ntn_UlSyncValidityDuration_r17)
+    t = ntn_validity_s[*ntn->ntn_UlSyncValidityDuration_r17];
+  double err_ns = 0;
+  const NR_TA_Info_r17_t *ta = ntn->ta_Info_r17;
+  if (ta) {
+    err_ns += 4.072 / 2;
+    if (ta->ta_CommonDrift_r17)
+      err_ns += 0.2 / 2 * t;
+    if (ta->ta_CommonDriftVariant_r17)
+      err_ns += 0.02 / 2 * t * t;
+  }
+  const NR_EphemerisInfo_r17_t *eph = ntn->ephemerisInfo_r17;
+  if (eph && eph->present == NR_EphemerisInfo_r17_PR_positionVelocity_r17) {
+    // service link round trip, steps of 1.3 m and 0.06 m/s per axis
+    const double pos_err_m = sqrt(3) * (1.3 / 2 + 0.06 / 2 * t);
+    err_ns += 2 * pos_err_m / SPEED_OF_LIGHT * 1e9;
+  }
+  return ceil(err_ns);
+}
+
+// N_CS samples of a sequence of length L_RA lasting 1 / delta f_RA (38.211 6.3.3.1)
+static int get_prach_zone_ns(int ncs, int prach_fmt, int prach_scs)
+{
+  int L_ra = 139;
+  double scs_hz = 15e3 * (1 << prach_scs);
+  if (prach_fmt < 4) {
+    L_ra = 839;
+    if (prach_fmt == 3)
+      scs_hz = 5e3;
+    else
+      scs_hz = 1.25e3;
+  }
+  if (ncs == 0)
+    ncs = L_ra;
+  return ncs * 1e9 / (L_ra * scs_hz);
+}
+
+static void check_prach_early_budget(const nr_cell_sched_t *cell, int early_ns)
+{
+  // the error is two-sided: the rest of the zone has to cover a late arrival as large
+  if (2 * early_ns > cell->prach_zone_ns)
+    LOG_W(NR_MAC,
+          "PRACH early arrival margin %d ns: zero correlation zone %d ns leaves %d ns for a late arrival\n",
+          early_ns,
+          cell->prach_zone_ns,
+          cell->prach_zone_ns - early_ns);
+}
+
+/* How early a preamble may arrive (ns), for the L1 PRACH detection. A UE that pre-compensates its timing advance (38.300
+ * 16.14.2.2) aims at the zero delay, with its own error Te_NTN (38.133 7.1C.2, relative to the Common TA it is given)
+ * and the error of the ntn-Config provided by the network. This is the part known at cell setup, the Common TA
+ * prediction of a time-based CHO adds to it (nr_mac_update_prach_early_margin()). */
+static void config_prach_early_margin(nr_cell_sched_t *cell, const NR_ServingCellConfigCommon_t *scc, int prach_fmt)
+{
+  if (!scc->ext2 || !scc->ext2->ntn_Config_r17)
+    return;
+  const long ssb_scs = *scc->ssbSubcarrierSpacing;
+  const long ul_scs = scc->uplinkConfigCommon->initialUplinkBWP->genericParameters.subcarrierSpacing;
+  const int te_ns = get_te_ntn_ns(ssb_scs, ul_scs);
+  if (te_ns == 0)
+    LOG_W(NR_MAC, "no Te_NTN for SSB SCS %ld and uplink SCS %ld\n", ssb_scs, ul_scs);
+  const int quant_ns = get_ntn_quantisation_ns(scc->ext2->ntn_Config_r17);
+  const NR_RACH_ConfigCommon_t *rach = scc->uplinkConfigCommon->initialUplinkBWP->rach_ConfigCommon->choice.setup;
+  const int ncs = get_NCS(rach->rach_ConfigGeneric.zeroCorrelationZoneConfig, prach_fmt, rach->restrictedSetConfig);
+  nfapi_nr_config_request_scf_t *cfg = &cell->config;
+  cell->prach_zone_ns = get_prach_zone_ns(ncs, prach_fmt, cfg->prach_config.prach_sub_c_spacing.value);
+  cell->prach_early_base_ns = min(te_ns + quant_ns, UINT16_MAX);
+  LOG_I(NR_MAC,
+        "PRACH early arrival margin %d ns: Te_NTN %d ns, ntn-Config quantisation %d ns (zero correlation zone %d ns)\n",
+        cell->prach_early_base_ns,
+        te_ns,
+        quant_ns,
+        cell->prach_zone_ns);
+  check_prach_early_budget(cell, cell->prach_early_base_ns);
+  cfg->prach_config.early_margin_ns_ve.tl.tag = NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG;
+  cfg->prach_config.early_margin_ns_ve.value = cell->prach_early_base_ns;
+  cfg->num_tlv++;
+}
+
+/* Time-based CHO: a UE prepared to access this cell (in the access list until its RA completes) uses the Common TA
+ * predicted over its T1 window, the error of the prediction adds to the margin. Sent to the L1 when it changes, the
+ * vendor extension alone in a CONFIG.request (RUNNING state). */
+void nr_mac_update_prach_early_margin(gNB_MAC_INST *mac, nr_cell_sched_t *cell)
+{
+  if (cell->prach_early_base_ns == 0)
+    return;
+  int cho_ns = 0;
+  UE_iterator(mac->UE_info.access_ue_list, UE) {
+    if (UE->pcell == cell && UE->ra)
+      cho_ns = max(cho_ns, UE->ra->cho_ta_err_ns);
+  }
+  const int early_ns = min(cell->prach_early_base_ns + cho_ns, UINT16_MAX);
+  nfapi_uint16_tlv_t *tlv = &cell->config.prach_config.early_margin_ns_ve;
+  if (early_ns == tlv->value)
+    return;
+  LOG_I(NR_MAC, "PRACH early arrival margin %d -> %d ns (time-based CHO Common TA error %d ns)\n", tlv->value, early_ns, cho_ns);
+  check_prach_early_budget(cell, early_ns);
+  tlv->value = early_ns;
+  // nFAPI: the PNF keeps the value of the cell setup
+  if (NFAPI_MODE != NFAPI_MONOLITHIC)
+    return;
+  nfapi_nr_config_request_scf_t req = {.num_tlv = 1};
+  req.prach_config.early_margin_ns_ve = *tlv;
+  NR_PHY_Config_t phycfg = {.phy_id = 0, .cfg = &req};
+  mac->if_inst->NR_PHY_config_req(&phycfg);
+}
+
 static void config_common(nr_cell_sched_t *cell, const nr_mac_config_t *config, NR_ServingCellConfigCommon_t *scc)
 {
   nfapi_nr_config_request_scf_t *cfg = &cell->config;
@@ -640,6 +765,7 @@ static void config_common(nr_cell_sched_t *cell, const nr_mac_config_t *config, 
   const uint32_t pointA = scc->downlinkConfigCommon->frequencyInfoDL->absoluteFrequencyPointA;
   const int prach_fmt = (get_nr_prach_format_from_index(rachConfig->prach_ConfigurationIndex, pointA, cc->frame_type) & 0xff);
   cc->prach_len = (prach_fmt < 4) ? get_long_prach_dur(prach_fmt, *scc->ssbSubcarrierSpacing) : 1;
+  config_prach_early_margin(cell, scc, prach_fmt);
 
   // SSB Table Configuration
 
@@ -1216,45 +1342,48 @@ void nr_register_ntn_ta_predictor(nr_ntn_ta_predictor_t predictor)
  * may start long after it received the configuration, and the epochTime of a target cell is the SFN nearest to that
  * reception (38.331 EpochTime): the epoch cannot move into the window. Instead, fit the Common TA over the window and
  * extend ntn-UlSyncValidityDuration to cover it. */
-void nr_mac_ntn_config_for_cho_window(NR_NTN_Config_r17_t *ntn_cfg, const f1ap_cho_time_window_t *window)
+int nr_mac_ntn_config_for_cho_window(NR_NTN_Config_r17_t *ntn_cfg, const f1ap_cho_time_window_t *window)
 {
   if (!ntn_ta_predictor) {
     LOG_W(NR_MAC, "time-based CHO: no Common TA prediction available, ntn-Config valid around the epoch only\n");
-    return;
+    return 0;
   }
   const uint64_t unix_1900_ms = 2208988800000ULL;
   if (window->start * 10 < unix_1900_ms)
-    return;
+    return 0;
   const uint64_t start_ms = window->start * 10 - unix_1900_ms;
   const uint64_t end_ms = start_ms + window->duration * 100;
   gnb_sat_position_update_t pred;
   uint64_t epoch_ms;
-  if (!ntn_ta_predictor(start_ms, end_ms, &pred, &epoch_ms) || end_ms <= epoch_ms) {
+  int err_ns;
+  if (!ntn_ta_predictor(start_ms, end_ms, &pred, &epoch_ms, &err_ns) || end_ms <= epoch_ms) {
     LOG_W(NR_MAC, "time-based CHO: no Common TA prediction for the window, ntn-Config valid around the epoch only\n");
-    return;
+    return 0;
   }
   set_ntn_config(ntn_cfg, &pred);
 
   // validity from the epoch to the end of the window, plus time to read the SIB19 of the target cell
-  const int validity_s[] = {5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 120, 180, 240, 900};
-  const int n_validity = sizeofArray(validity_s);
+  const int n_validity = sizeofArray(ntn_validity_s);
   const double needed_s = (end_ms - epoch_ms) / 1000.0 + 10;
   int idx = 0;
-  while (idx < n_validity - 1 && validity_s[idx] < needed_s)
+  while (idx < n_validity - 1 && ntn_validity_s[idx] < needed_s)
     idx++;
   if (!ntn_cfg->ntn_UlSyncValidityDuration_r17)
     ntn_cfg->ntn_UlSyncValidityDuration_r17 = calloc_or_fail(1, sizeof(*ntn_cfg->ntn_UlSyncValidityDuration_r17));
   if (*ntn_cfg->ntn_UlSyncValidityDuration_r17 < idx)
     *ntn_cfg->ntn_UlSyncValidityDuration_r17 = idx;
   LOG_I(NR_MAC,
-        "time-based CHO window %.1f-%.1f s after the epoch (SFN %d): ta-Common %u, drift %d, drift variant %u, validity %d s\n",
+        "time-based CHO window %.1f-%.1f s after the epoch (SFN %d): ta-Common %u, drift %d, drift variant %u, validity %d s, "
+        "Common TA error %d ns\n",
         (start_ms - (double)epoch_ms) / 1000,
         (end_ms - (double)epoch_ms) / 1000,
         pred.sfn,
         pred.delay,
         pred.drift,
         pred.accel,
-        validity_s[*ntn_cfg->ntn_UlSyncValidityDuration_r17]);
+        ntn_validity_s[*ntn_cfg->ntn_UlSyncValidityDuration_r17],
+        err_ns);
+  return err_ns;
 }
 
 bool nr_trigger_bwp_switch(uint16_t rnti, int bwp_id)

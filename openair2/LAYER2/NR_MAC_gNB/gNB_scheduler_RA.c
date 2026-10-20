@@ -2208,6 +2208,7 @@ void nr_schedule_RA(gNB_MAC_INST *mac,
                     nfapi_nr_tx_data_request_t *TX_req)
 {
   start_meas(&cell->schedule_ra);
+  nr_mac_update_prach_early_margin(mac, cell);
   UE_iterator(mac->UE_info.access_ue_list, UE) {
     if (UE->pcell != cell)
       continue;

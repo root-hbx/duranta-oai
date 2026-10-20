@@ -722,8 +722,8 @@ void ue_context_setup_request(const f1ap_ue_context_setup_req_t *req)
   resp.gNB_DU_ue_id = UE->rnti;
   if (!ue_id_provided && req->cho_time_window) {
     NR_ServingCellConfigCommon_t *ho_scc = UE->CellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon;
-    if (ho_scc->ext2 && ho_scc->ext2->ntn_Config_r17)
-      nr_mac_ntn_config_for_cho_window(ho_scc->ext2->ntn_Config_r17, req->cho_time_window);
+    if (ho_scc->ext2 && ho_scc->ext2->ntn_Config_r17 && UE->ra)
+      UE->ra->cho_ta_err_ns = nr_mac_ntn_config_for_cho_window(ho_scc->ext2->ntn_Config_r17, req->cho_time_window);
   }
   if (!ue_id_provided) {
     /* new UE: report the C-RNTI we allocated back to the CU */
