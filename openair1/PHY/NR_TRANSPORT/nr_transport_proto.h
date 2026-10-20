@@ -124,6 +124,7 @@ typedef struct rx_prach_out {
   uint16_t max_preamble_energy;
   uint16_t max_preamble_delay;
   uint16_t max_preamble_delay_raw; // raw PRACH correlation-bin delay before TA normalization
+  int32_t delay_ns; // arrival relative to the zero delay of the detected preamble, negative if early
 } rx_prach_out_t;
 rx_prach_out_t rx_nr_prach(const prach_item_t *, int occasion);
 

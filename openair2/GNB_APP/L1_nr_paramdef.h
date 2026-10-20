@@ -23,6 +23,8 @@
 #define L1_OFDM_OFFSET_DIVISOR               "ofdm_offset_divisor"
 #define L1_PUCCH0_DTX_THRESHOLD              "pucch0_dtx_threshold"
 #define L1_PRACH_DTX_THRESHOLD               "prach_dtx_threshold"
+#define L1_PRACH_EARLY_MARGIN                "prach_early_margin"
+#define HLP_L1_PRACH_EARLY_MARGIN "PRACH detection margin for early arrival in TA units (16*64*Tc/2^mu), e.g. NTN UE TA pre-compensation"
 #define L1_PUSCH_DTX_THRESHOLD               "pusch_dtx_threshold"
 #define L1_SRS_DTX_THRESHOLD                 "srs_dtx_threshold"
 #define L1_MAX_LDPC_ITERATIONS               "max_ldpc_iterations"
@@ -57,6 +59,7 @@
   {L1_OFDM_OFFSET_DIVISOR,               NULL,       0,         .uptr=NULL,           .defuintval=8,              TYPE_UINT,     0},         \
   {L1_PUCCH0_DTX_THRESHOLD,              NULL,       0,         .uptr=NULL,           .defintval=100,             TYPE_UINT,     0},         \
   {L1_PRACH_DTX_THRESHOLD,               NULL,       0,         .uptr=NULL,           .defintval=150,             TYPE_UINT,     0},         \
+  {L1_PRACH_EARLY_MARGIN,                HLP_L1_PRACH_EARLY_MARGIN, 0, .uptr=NULL,      .defintval=0,               TYPE_UINT,     0},         \
   {L1_PUSCH_DTX_THRESHOLD,               NULL,       0,         .uptr=NULL,           .defintval=50,              TYPE_UINT,     0},         \
   {L1_SRS_DTX_THRESHOLD,                 NULL,       0,         .uptr=NULL,           .defintval=30,              TYPE_UINT,     0},         \
   {L1_MAX_LDPC_ITERATIONS,               NULL,       0,         .uptr=NULL,           .defintval=8,               TYPE_UINT,     0},         \

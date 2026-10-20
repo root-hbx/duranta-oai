@@ -18,7 +18,9 @@
 # Output under build/pcap-ntn-cho/<trans|regen>-<time>: results.txt (one line per run), logs/<run>/, summary.txt.
 # results.txt: run, OK|FAIL, trace time of the execution (s), interruption (ms, CHO execution at the UE to the
 # RRCReconfigurationComplete at the target), largest ping gap (s), max predicted Common TA error of the target (us),
-# with THREE_SAT the PCI the UE executed and whether the other candidate was cancelled (cancel|-)
+# with THREE_SAT the PCI the UE executed and whether the other candidate was cancelled (cancel|-), then the PRACH
+# attempts of the UE towards the executed cell and the arrival delay of the first preamble its gNB detected (ns,
+# negative if early)
 export TWO_SAT=1 HO_IF=xn
 source "$(dirname "$0")/ntn.sh"
 cd "$(dirname "$0")"
@@ -73,7 +75,15 @@ for k in $(seq $N); do
   gap=$(grep 'bytes from' $out/logs/$k/ping.txt | grep -o '^\[[0-9.]*\]' | tr -d '[]' |
     awk 'NR > 1 && $1 - p > g { g = $1 - p } { p = $1 } END { printf "%.1f", g }')
   ta=$({ grep -o 'Common TA prediction.*max error [0-9.]*' $out/logs/$k/$tgt.log || true; } | tail -1 | awk '{ print $NF }')
-  echo "$k $res ${t_exe} ${intr} ${gap} ${ta:--}${other:+ ${pci:--} $cancel}" | tee -a $out/results.txt
+  prach=- delay=-
+  if [ -n "$exe" ]; then
+    t0=$(wall "$exe") exe_gnb=$out/logs/$k/ntn-gnb$(( ${pci:-$TARGET} + 1 )).log
+    prach=$(awk -v t0=$t0 '$1 + 0 > t0 && /PRACH \[UE/ { n++ } $1 + 0 > t0 && /Found RAR with the intended RAPID|T304 expired/ { exit }
+      END { print n + 0 }' $out/logs/$k/nr-ue.log)
+    delay=$({ grep 'Initiating RA procedure' $exe_gnb || true; } | awk -v t0=$t0 '$1 + 0 > t0' |
+      sed -n '1s/.*(\(-*[0-9]*\) ns).*/\1/p')
+  fi
+  echo "$k $res ${t_exe} ${intr} ${gap} ${ta:--}${other:+ ${pci:--} $cancel} $prach ${delay:--}" | tee -a $out/results.txt
 done
 reset
 

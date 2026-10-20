@@ -40,6 +40,7 @@ typedef struct {
   int prach_sequence_length;
   int restricted_set;
   int numerology_index;
+  int early_margin; // TA units, see rx_nr_prach()
   int nb_rx;
   int ant_start;
   c16_t (*Xu)[839];
@@ -405,6 +406,7 @@ typedef struct PHY_VARS_gNB_s {
   int pucch0_thres;
   int pusch_thres;
   int prach_thres;
+  int prach_early_margin;
   int srs_thres;
   uint64_t bad_pucch;
   int num_ulprbbl;
