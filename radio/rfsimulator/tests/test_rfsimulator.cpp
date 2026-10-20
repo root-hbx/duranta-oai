@@ -750,8 +750,10 @@ TEST_F(SatTraceTest, TransparentUplinkAndSib19)
 
   ASSERT_EQ(sib19_update_count, count + 1);
   EXPECT_EQ(last_sib19_update.sfn, (int)(t * 100 + 1) % 1024);
-  EXPECT_NEAR(last_sib19_update.delay, 2 * dist_feeder / (kC * 4.072e-9), 1);
-  EXPECT_NEAR(last_sib19_update.position.X, SatPos(t)[0] / 1.3, 1);
+  // the values are at the epoch, the start of the next frame
+  const double t_epoch = t + 0.01;
+  EXPECT_NEAR(last_sib19_update.delay, 2 * Dist(SatPos(t_epoch), cd->pos_gnb) / (kC * 4.072e-9), 1);
+  EXPECT_NEAR(last_sib19_update.position.X, SatPos(t_epoch)[0] / 1.3, 1);
   EXPECT_NEAR(last_sib19_update.position.Z, kOrbitZ / 1.3, 1);
   EXPECT_NEAR(last_sib19_update.velocity.X, kSatVel / 0.06, 1);
   // drift fitted over [t, t + 10 s] is close to the feeder link range rate at t + 2.5 s or so: just check the sign

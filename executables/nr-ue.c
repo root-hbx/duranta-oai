@@ -622,6 +622,14 @@ void UE_dl_processing(void *arg) {
   TracyCZoneEnd(ctx);
 }
 
+/* TX advance of the slot duration_rx_to_tx slots after the RX slot its timing is derived from. TS 38.211 4.3.1
+ * refers it to the DL timing of its own slot, which in NTN has drifted by then (tens of us/s, 27 ms Koffset) */
+static int get_tx_advance(const PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int duration_rx_to_tx)
+{
+  const double drift = UE->ntn_dl_drift * 1e-6 * duration_rx_to_tx * fp->samples_per_subframe / fp->slots_per_subframe;
+  return UE->timing_advance + UE->timing_advance_ntn - lround(drift);
+}
+
 void dummyWrite(PHY_VARS_NR_UE *UE, openair0_timestamp_t timestamp, int writeBlockSize)
 {
   const NR_DL_FRAME_PARMS *fp = &UE->frame_parms;
@@ -808,6 +816,7 @@ void *UE_thread(void *arg)
     dynamic_barrier_init(&UE->process_slot_tx_barriers[i]);
   }
   int shiftForNextFrame = 0;
+  int resyncShift = 0;
   int intialSyncOffset = 0;
   openair0_timestamp_t sync_timestamp;
   bool stats_printed = false;
@@ -933,9 +942,6 @@ void *UE_thread(void *arg)
       stream_status = STREAM_STATUS_SYNCING;
       syncInFrame(UE, &sync_timestamp, duration_rx_to_tx, intialSyncOffset);
       nrue_ru_write_reorder_clear_context(UE);
-      shiftForNextFrame = -(skipped_frames)*UE->max_pos_acc
-                          * get_nrUE_params()->time_sync_I; // compensate for the time drift that happened during initial sync
-      LOG_I(PHY, "max_pos_acc = %d, shiftForNextFrame = %d\n", UE->max_pos_acc, shiftForNextFrame);
       // read in first symbol
       int ret = nrue_ru_read(UE,
                              &sync_timestamp,
@@ -973,6 +979,15 @@ void *UE_thread(void *arg)
         apply_ntn_timing_advance_and_doppler(UE, fp, abs_subframe_tx);
         ntn_targetcell = false;
       }
+      // a resync to an NTN cell, e.g., after a handover to another satellite: its DL timing drift, not the one
+      // tracked on the previous cell
+      if (ntn_koffset && get_nrUE_params()->time_sync_I)
+        UE->max_pos_acc = lround(UE->ntn_dl_drift * 1e-6 * fp->samples_per_frame / get_nrUE_params()->time_sync_I);
+      // compensate for the time drift that happened during initial sync from the first slot, as an early PRACH
+      // (e.g., a handover) is timed from it
+      resyncShift = -round(skipped_frames * UE->max_pos_acc * get_nrUE_params()->time_sync_I);
+      shiftForNextFrame = -round(UE->max_pos_acc * get_nrUE_params()->time_sync_I);
+      LOG_I(PHY, "max_pos_acc = %d, resyncShift = %d\n", UE->max_pos_acc, resyncShift);
       UE->timing_advance = 0;
       // We have resynchronized, maybe after RF loss so we need to purge any existing context
       memset(tx_wait_for_dlsch, 0, sizeof(tx_wait_for_dlsch));
@@ -1032,6 +1047,12 @@ void *UE_thread(void *arg)
         UE->timing_advance_ntn -= 2 * shiftForNextFrame;
       shiftForNextFrame = -round(UE->max_pos_acc * get_nrUE_params()->time_sync_I);
     }
+    if (resyncShift) {
+      iq_shift_to_apply += resyncShift;
+      if (ntn_koffset && get_nrUE_params()->autonomous_ta)
+        UE->timing_advance_ntn -= 2 * resyncShift;
+      resyncShift = 0;
+    }
 
     // Calculate new TA based on SIB19 information for each subframe in NTN mode, if "autonomous_ta" is not enabled
     if (ntn_koffset && !ntn_targetcell && !get_nrUE_params()->autonomous_ta
@@ -1076,7 +1097,7 @@ void *UE_thread(void *arg)
 
     // but use current UE->timing_advance value to compute writeBlockSize
     int writeBlockSize = get_samples_per_slot((slot_nr + duration_rx_to_tx) % nb_slot_frame, fp) - iq_shift_to_apply;
-    int new_timing_advance = UE->timing_advance + UE->timing_advance_ntn;
+    int new_timing_advance = get_tx_advance(UE, fp, duration_rx_to_tx);
     if (new_timing_advance != timing_advance) {
       writeBlockSize -= new_timing_advance - timing_advance;
       timing_advance = new_timing_advance;

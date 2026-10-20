@@ -261,12 +261,14 @@ static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSa
 
   const int samples_per_subframe = channelDesc->sampling_rate / 1000;
   const int abs_subframe = TS / samples_per_subframe;
-  if (abs_subframe % 10 == 0) { // update SIB19 information for the next frame
+  if (abs_subframe % 10 == 0) { // update SIB19 information for the next frame, its epoch
+    const double t_epoch = t + ((abs_subframe / 10 + 1) * 10.0 * samples_per_subframe - TS) / channelDesc->sampling_rate;
+    interp_sat_trace(channelDesc, t_epoch, pos_sat, vel_sat);
     // ta-Common covers the feeder link only; for SAT_LEO_REGEN there is none, the UE computes the
     // service link delay itself from the ephemeris
     double dist_sib19 = 0, vel_sib19 = 0, acc_sib19 = 0;
     if (transparent)
-      trace_link_dynamics(channelDesc, t, pos_gnb, &dist_sib19, &vel_sib19, &acc_sib19);
+      trace_link_dynamics(channelDesc, t_epoch, pos_gnb, &dist_sib19, &vel_sib19, &acc_sib19);
     gnb_sat_position_update_t sat_position = {
         .sfn = (abs_subframe / 10 + 1) % 1024,
         .subframe = 0,
@@ -281,7 +283,6 @@ static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSa
         .velocity.Z = vel_sat[2] / 0.06,
     };
     nr_update_sib19(&sat_position);
-    const double t_epoch = t + ((abs_subframe / 10 + 1) * 10.0 * samples_per_subframe - TS) / channelDesc->sampling_rate;
     update_ta_prediction(channelDesc, transparent, &sat_position, t_epoch);
   }
 }

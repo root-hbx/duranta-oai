@@ -390,6 +390,7 @@ typedef struct PHY_VARS_NR_UE_s {
   /// Timing advance update computed from the TA command signalled from gNB
   int timing_advance; /// corresponds to N_TA
   int timing_advance_ntn; /// corresponds to N_common_TA_adj + N_UE_TA_adj
+  double ntn_dl_drift; /// DL timing drift from the NTN-Config (us/s), > 0 if the delay increases
   int N_TA_offset; ///timing offset used in TDD
   int ta_frame;
   int ta_slot;

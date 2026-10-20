@@ -40,8 +40,10 @@ void apply_ntn_doppler_target_cell(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *
 {
   UE->nrUE_config.ntn_config.epoch_hfn = get_target_epoch_hfn(&UE->nrUE_config.ntn_config);
   const int timing_advance_ntn = UE->timing_advance_ntn;
+  const double ntn_dl_drift = UE->ntn_dl_drift;
   apply_ntn_timing_advance_and_doppler(UE, fp, abs_subframe);
   UE->timing_advance_ntn = timing_advance_ntn;
+  UE->ntn_dl_drift = ntn_dl_drift;
 }
 
 // projected velocity of the satellite towards the UE ms_since_epoch after the epoch, and their distance
@@ -99,8 +101,10 @@ void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_
 
   // Handle terrestrial networks
   if (ntn_config_params->cell_specific_k_offset == 0) {
-    if (abs_subframe_tx >= 0)
+    if (abs_subframe_tx >= 0) {
       UE->timing_advance_ntn = 0;
+      UE->ntn_dl_drift = 0;
+    }
     UE->dl_Doppler_shift = 0;
     UE->ul_Doppler_shift = 0;
     return;
@@ -131,6 +135,8 @@ void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_
     UE->timing_advance_ntn = (N_UE_TA_adj + N_common_ta_adj + N_common_ta_drift * ms_since_epoch / 1e6
                               + N_common_ta_drift_variant * ((int64_t)ms_since_epoch * ms_since_epoch) / 1e9)
                              * fp->samples_per_subframe;
+    // service link delay rate plus the feeder link one, half of the Common TA (round trip) drift
+    UE->ntn_dl_drift = -vel_sat_ue / SPEED_OF_LIGHT * 1e6 + (N_common_ta_drift + 2 * N_common_ta_drift_variant * ms_since_epoch / 1e3) / 2;
   }
 
   UE->freq_offset -= dl_Doppler_shift - UE->dl_Doppler_shift;
