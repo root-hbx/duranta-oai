@@ -82,6 +82,8 @@ typedef struct nr_neighbor_cell_info {
 } nr_neighbor_cell_info_t;
 
 void nr_rrc_mac_config_req_meas(module_id_t module_id, const nr_neighbor_cell_info_t *neighbor_cells, int num_neighbors);
+/** @brief ntn-Config of a neighbour cell (NULL: none), to measure it with its own Doppler, received at hfn.frame */
+void nr_rrc_mac_config_req_neighbour_ntn(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame);
 
 /**\brief initialization NR UE MAC instance(s)*/
 NR_UE_MAC_INST_t * nr_l2_init_ue(int nb_inst, int numerology);

@@ -724,6 +724,9 @@ typedef struct {
   uint32_t ssb_freq;
   bool Nid_cell_was_configured; // False = Nid_cell wasn't configured, and if it exists, it's because it was measured.
   bool is_candidate;
+  // NTN: ntn-Config of the cell (e.g., a conditional handover candidate), to measure it with its own Doppler
+  bool has_ntn_config;
+  fapi_nr_ntn_config_t ntn_config;
 } fapi_nr_neighboring_cell_t;
 
 typedef struct {

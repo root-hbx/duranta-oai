@@ -44,25 +44,12 @@ void apply_ntn_doppler_target_cell(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *
   UE->timing_advance_ntn = timing_advance_ntn;
 }
 
-// calculate TA and Doppler based on the NTN-Config, if abs_subframe_tx < 0 then apply only Doppler
-void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int abs_subframe_tx)
+// projected velocity of the satellite towards the UE ms_since_epoch after the epoch, and their distance
+static double get_sat_velocity_towards_ue(const PHY_VARS_NR_UE *UE,
+                                          const fapi_nr_ntn_config_t *ntn_config_params,
+                                          int ms_since_epoch,
+                                          double *distance)
 {
-  const fapi_nr_ntn_config_t *ntn_config_params = &UE->nrUE_config.ntn_config;
-
-  // Handle terrestrial networks
-  if (ntn_config_params->cell_specific_k_offset == 0) {
-    if (abs_subframe_tx >= 0)
-      UE->timing_advance_ntn = 0;
-    UE->dl_Doppler_shift = 0;
-    UE->ul_Doppler_shift = 0;
-    return;
-  }
-
-  const int abs_subframe_epoch = ntn_config_params->epoch_subframe
-                               + ntn_config_params->epoch_sfn * 10
-                               + ntn_config_params->epoch_hfn * 10240;
-  const int ms_since_epoch = abs_subframe_tx < 0 ? 0 : abs_subframe_tx - abs_subframe_epoch;
-
   const position_t pos_sat_0 = ntn_config_params->pos_sat_0;
   const position_t vel_sat_0 = ntn_config_params->vel_sat_0;
 
@@ -97,10 +84,35 @@ void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_
   const position_t dir_sat_ue = {pos_ue.X - pos_sat.X, pos_ue.Y - pos_sat.Y, pos_ue.Z - pos_sat.Z};
 
   // calculate distance between SAT and UE
-  const double distance = sqrt(dir_sat_ue.X * dir_sat_ue.X + dir_sat_ue.Y * dir_sat_ue.Y + dir_sat_ue.Z * dir_sat_ue.Z);
+  *distance = sqrt(dir_sat_ue.X * dir_sat_ue.X + dir_sat_ue.Y * dir_sat_ue.Y + dir_sat_ue.Z * dir_sat_ue.Z);
 
   // calculate projected velocity from SAT towards UE
-  const double vel_sat_ue = (vel_sat.X * dir_sat_ue.X + vel_sat.Y * dir_sat_ue.Y + vel_sat.Z * dir_sat_ue.Z) / distance;
+  const double vel_sat_ue = (vel_sat.X * dir_sat_ue.X + vel_sat.Y * dir_sat_ue.Y + vel_sat.Z * dir_sat_ue.Z) / *distance;
+
+  return vel_sat_ue;
+}
+
+// calculate TA and Doppler based on the NTN-Config, if abs_subframe_tx < 0 then apply only Doppler
+void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int abs_subframe_tx)
+{
+  const fapi_nr_ntn_config_t *ntn_config_params = &UE->nrUE_config.ntn_config;
+
+  // Handle terrestrial networks
+  if (ntn_config_params->cell_specific_k_offset == 0) {
+    if (abs_subframe_tx >= 0)
+      UE->timing_advance_ntn = 0;
+    UE->dl_Doppler_shift = 0;
+    UE->ul_Doppler_shift = 0;
+    return;
+  }
+
+  const int abs_subframe_epoch = ntn_config_params->epoch_subframe
+                               + ntn_config_params->epoch_sfn * 10
+                               + ntn_config_params->epoch_hfn * 10240;
+  const int ms_since_epoch = abs_subframe_tx < 0 ? 0 : abs_subframe_tx - abs_subframe_epoch;
+
+  double distance;
+  const double vel_sat_ue = get_sat_velocity_towards_ue(UE, ntn_config_params, ms_since_epoch, &distance);
 
   // calculate DL Doppler shift (moving source)
   const double dl_Doppler_shift = (vel_sat_ue / (SPEED_OF_LIGHT - vel_sat_ue)) * fp->dl_CarrierFreq;
@@ -132,6 +144,19 @@ void apply_ntn_timing_advance_and_doppler(PHY_VARS_NR_UE *UE, const NR_DL_FRAME_
           dl_Doppler_shift / 1000,
           ul_Doppler_shift / 1000);
   }
+}
+
+/* DL Doppler shift of a neighbour cell at abs_subframe, from its own ntn-Config (e.g., a conditional handover
+ * candidate) */
+double get_ntn_neighbour_dl_doppler(const PHY_VARS_NR_UE *UE,
+                                    const fapi_nr_ntn_config_t *cfg,
+                                    const NR_DL_FRAME_PARMS *fp,
+                                    int abs_subframe)
+{
+  const int abs_subframe_epoch = cfg->epoch_subframe + cfg->epoch_sfn * 10 + get_target_epoch_hfn(cfg) * 10240;
+  double distance;
+  const double vel_sat_ue = get_sat_velocity_towards_ue(UE, cfg, abs_subframe - abs_subframe_epoch, &distance);
+  return (vel_sat_ue / (SPEED_OF_LIGHT - vel_sat_ue)) * fp->dl_CarrierFreq;
 }
 
 // apply values based on the NTN-Config

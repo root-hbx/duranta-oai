@@ -3055,6 +3055,8 @@ void nr_rrc_mac_config_req_meas(module_id_t module_id, const nr_neighbor_cell_in
 
   for (int i = 0; i < num_neighbors && i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
     fapi_nr_neighboring_cell_t *phy_cell = &mac->phy_config.config_req.meas_config.nr_neighboring_cell[i];
+    if (phy_cell->Nid_cell != neighbor_cells[i].Nid_cell)
+      phy_cell->has_ntn_config = false;
     phy_cell->Nid_cell = neighbor_cells[i].Nid_cell;
     phy_cell->Nid_cell_was_configured = phy_cell->Nid_cell == (uint16_t)-1 ? false : true;
     phy_cell->ssb_freq = neighbor_cells[i].ssb_freq;
@@ -3062,4 +3064,24 @@ void nr_rrc_mac_config_req_meas(module_id_t module_id, const nr_neighbor_cell_in
   }
 
   mac->if_module->phy_config_request(&mac->phy_config);
+}
+
+void nr_rrc_mac_config_req_neighbour_ntn(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame)
+{
+  NR_UE_MAC_INST_t *mac = get_mac_inst(module_id);
+  int ret = pthread_mutex_lock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
+  for (int i = 0; i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
+    fapi_nr_neighboring_cell_t *phy_cell = &mac->phy_config.config_req.meas_config.nr_neighboring_cell[i];
+    if (!phy_cell->active || phy_cell->Nid_cell != pci)
+      continue;
+    phy_cell->has_ntn_config = ntn_config != NULL;
+    if (ntn_config)
+      configure_ntn_ta(&phy_cell->ntn_config, ntn_config, hfn, frame, true);
+    LOG_I(NR_MAC, "neighbour cell PCI %d: %s ntn-Config for measurements\n", pci, ntn_config ? "own" : "no");
+    mac->if_module->phy_config_request(&mac->phy_config);
+    break;
+  }
+  ret = pthread_mutex_unlock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
 }

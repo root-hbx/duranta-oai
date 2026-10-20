@@ -10,6 +10,7 @@
 #include <limits.h>
 #include "rrc_proto.h"
 #include "nr_ue_gnss.h"
+#include "LAYER2/NR_MAC_UE/mac_proto.h"
 #include "oai_asn1.h"
 #include "NR_RRCReconfiguration.h"
 #include "NR_CellGroupConfig.h"
@@ -79,8 +80,20 @@ static void reset_evaluation(nr_cond_reconfig_t *c)
   }
 }
 
-static void free_cand(nr_cond_reconfig_t *c)
+/* the UE measures a candidate cell with the Doppler of its own ntn-Config (none: the one of the serving cell) */
+static void config_cand_meas(const NR_UE_RRC_INST_t *rrc, const nr_cond_reconfig_t *c, bool release)
 {
+  if (c->pci < 0)
+    return;
+  NR_NTN_Config_r17_t *ntn = release ? NULL : nr_rrc_cho_get_ntn_config(c);
+  if (release || ntn)
+    nr_rrc_mac_config_req_neighbour_ntn(rrc->ue_id, c->pci, ntn, c->rx_hfn, c->rx_frame);
+  ASN_STRUCT_FREE(asn_DEF_NR_NTN_Config_r17, ntn);
+}
+
+static void free_cand(const NR_UE_RRC_INST_t *rrc, nr_cond_reconfig_t *c)
+{
+  config_cand_meas(rrc, c, true);
   free_byte_array(c->rrc_reconfig);
   memset(c, 0, sizeof(*c));
 }
@@ -96,7 +109,7 @@ void nr_rrc_cho_configure(NR_UE_RRC_INST_t *rrc, const NR_ConditionalReconfigura
       nr_cond_reconfig_t *c = find_cand(var, *cr->condReconfigToRemoveList_r16->list.array[i]);
       if (c) {
         RRCLOG_I("CHO: remove candidate %ld (PCI %d)\n", c->id, c->pci);
-        free_cand(c);
+        free_cand(rrc, c);
       }
     }
   }
@@ -126,6 +139,7 @@ void nr_rrc_cho_configure(NR_UE_RRC_INST_t *rrc, const NR_ConditionalReconfigura
         c->pci = get_applicable_pci(&c->rrc_reconfig);
         c->rx_hfn = rrc->current_hfn;
         c->rx_frame = rrc->current_frame;
+        config_cand_meas(rrc, c, false);
       }
       RRCLOG_I("CHO: candidate %ld, applicable cell PCI %d, execution condition measId %ld%s%ld\n",
                c->id,
@@ -164,7 +178,7 @@ void nr_rrc_cho_release(NR_UE_RRC_INST_t *rrc)
 {
   for (int i = 0; i < NR_maxNrofCondCells_r16; i++) {
     if (rrc->cond_reconfig.cand[i].id)
-      free_cand(&rrc->cond_reconfig.cand[i]);
+      free_cand(rrc, &rrc->cond_reconfig.cand[i]);
   }
   rrc->cond_reconfig.attempt_cond_reconfig = false;
   rrc->cond_reconfig.recovery = false;
