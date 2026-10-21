@@ -57,7 +57,8 @@ def tcp_fields(run, pcap):
   """time, dst port, payload length, TSval, TSecr of the iperf3 packets."""
   rows = tshark(run, pcap, ["frame.time_epoch", "tcp.dstport", "tcp.len", "tcp.options.timestamp.tsval",
                             "tcp.options.timestamp.tsecr"], f"tcp.port=={PORT}")
-  return [(float(r[0]), int(r[1]), int(r[2]), r[3], r[4]) for r in rows]
+  # a packet cut short in the capture has no port or length
+  return [(float(r[0]), int(r[1]), int(r[2]), r[3], r[4]) for r in rows if r[1] and r[2]]
 
 
 def thpt(run, direction, bin_s=0.1):
