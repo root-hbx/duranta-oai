@@ -2,12 +2,14 @@
 # TCP during NR NTN handovers, with packet captures (ntn_cap.sh), under build/pcap-ntn/tcp-<dl|ul>-<trans|regen>-*
 #   [REGEN=1] [DIR=dl|ul] ntn_tcp.sh base [runs]        RRC_CONNECTED on gNB1, no handover (40 s)
 #   [REGEN=1] [DIR=dl|ul] ntn_tcp.sh connected [runs]   N2 handover to PCI 1 and back to PCI 0
+#   TWO_SAT=1 [REGEN=1] [DIR=dl|ul] ntn_tcp.sh cho|base [runs]   time-based CHO to PCI 1 (sat 1) / no handover,
+#                         trace time 90-165 s (ntn_cap.sh)
 # Traffic: iperf3 from the UPF (client: iperf_core) to the UE (server: iperf_ue), 100 Mbit/s offered, 100 ms reports.
-# DIR=dl (default) the UPF sends; DIR=ul reverse mode (-R), the UE sends. Captures keep the headers only;
-# thr_rx.csv is the receiver goodput per 100 ms (dl: ue.pcap, ul: sgi.pcap).
+# DIR=dl (default) the UPF sends; DIR=ul reverse mode (-R), the UE sends. Captures keep full packets (MAC:
+# ntn_cap.sh); thr_rx.csv is the receiver goodput per 100 ms (dl: ue.pcap, ul: sgi.pcap).
 
 DIR=${DIR:-dl}
-KIND=tcp-$DIR SGI_FILTER='tcp port 5201' SNAP=128 MAC_SNAP=300 T_BASE=40 T_PRE=10 T_POST=15
+KIND=tcp-$DIR SGI_FILTER='tcp port 5201' SNAP=0 T_BASE=40 T_PRE=10 T_POST=15
 # rx: receiver capture and its data filter; tx: sender capture and the pattern of its data packets
 if [ $DIR = ul ]; then rev=-R rx=sgi.pcap data='tcp src port 5201' tx=ue.pcap txdata='IP [0-9.]+[.]5201 >'
 else rev= rx=ue.pcap data='tcp dst port 5201' tx=sgi.pcap txdata='> [0-9.]+[.]5201:'; fi

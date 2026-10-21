@@ -41,12 +41,42 @@ reset() { dc down 2>/dev/null; docker rm -f nr-ue ntn-gnb1 ntn-gnb2 ntn-gnb3 >/d
 # one telnet client at a time per softmodem (concurrent ones crash it), the softmodems in parallel
 beam() { local a=-${NBR_ATT:-20} g=(0 0 0); [ $1 = edge ] || g=($a $a $a) g[$1]=0; gains ${g[@]}; }
 # gains <dB of gNB1> <dB of gNB2> [<dB of gNB3>]
+# waits for its own jobs only: a caller may have others (ntn_cap.sh traffic)
 gains() { ploss() { tn $1 "channelmod modify $2 ploss $3" 0.2 >/dev/null; }
-  { ploss nr-ue 1 $1; ploss nr-ue 2 $2; [ -z "$THREE_SAT" ] || ploss nr-ue 3 ${3:-0}; } & ploss ntn-gnb1 0 $1 &
-  ploss ntn-gnb2 0 $2 & [ -z "$THREE_SAT" ] || ploss ntn-gnb3 0 ${3:-0} & wait; }
+  local pids
+  { ploss nr-ue 1 $1; ploss nr-ue 2 $2; [ -z "$THREE_SAT" ] || ploss nr-ue 3 ${3:-0}; } & pids+=" $!"
+  ploss ntn-gnb1 0 $1 & pids+=" $!"
+  ploss ntn-gnb2 0 $2 & pids+=" $!"
+  if [ -n "$THREE_SAT" ]; then ploss ntn-gnb3 0 ${3:-0} & pids+=" $!"; fi
+  wait $pids; }
 # a fresh AMF per run: after a failed handover it may keep the old gNB association and refuse the new gNB2
 amf_restart() { t=$(date +%s); docker restart amf >/dev/null
   for i in $(seq 30); do docker logs --since $t amf 2>&1 | grep -q 'NF registered' && return; sleep 1; done; echo "timeout: amf"; return 1; }
+# trace time (s) of the UE (rfsim server with "connected")
+trace_time() { tn nr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
+wait_trace() { while awk "BEGIN { exit !($(trace_time) < $1) }"; do sleep 0.2; done; }
+wall() { awk '{ print $1 }' <<< "$1"; }
+# time-based CHO in the TWO_SAT time line (s): PREP (default 100) the source prepares the CHO, T1 + T1_DUR (120, 30)
+# condEventT1 window, BEAM + RAMP (122, 10) the UE moves to the target beam, END (165) last check
+U0=1792306580000  # UTC (ms since 1970) of the trace start
+# condEventT1: t1-Threshold in 10 ms since 1900, duration in 100 ms
+t1_threshold() { echo $(( (U0 + 2208988800000 + $1 * 1000) / 10 )); }
+cho_setup() { PREP=${PREP:-100} T1=${T1:-120} T1_DUR=${T1_DUR:-30} BEAM=${BEAM:-122} RAMP=${RAMP:-10} END=${END:-165}
+  export GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.t1_threshold $(t1_threshold $T1)
+  --gNBs.[0].nr_cho_configuration.t1_duration $(( T1_DUR * 10 )) $GNB1_EXTRA"; }
+# cho_ramp <target 1|2> [<other candidate>]: from BEAM s, in RAMP s, the gains of sat 0 and the target cross in STEP dB
+# steps (default 4), from the target NBR_ATT dB weaker to sat 0 NBR_ATT dB weaker; the other one OTHER_GAP dB (3) below
+cho_ramp() { local a=${NBR_ATT:-20} x g
+  wait_trace $BEAM
+  for x in $(seq 0 ${STEP:-4} $a); do
+    wait_trace $(awk "BEGIN { print $BEAM + $x * $RAMP / $a }")
+    g=(-$x -$a -$a); g[$1]=-$((a - x)); [ -n "$2" ] && g[$2]=-$((a - x + ${OTHER_GAP:-3}))
+    gains ${g[@]} > /dev/null 2>&1
+  done; }
+# trace time (s) of a "CHO: execute candidate" line: "now <hfn>.<frame> HFN.frame", the UE starts the clock at 0.0
+cho_exe_time() { sed -n 's/.*now \([0-9]*\)\.\([0-9]*\) HFN.frame.*/\1 \2/p' <<< "$1" | awk '{ printf "%.2f", $1 * 10.24 + $2 / 100 }'; }
+# interruption (ms): CHO execution at the UE to the RRCReconfigurationComplete at the target
+cho_interruption() { awk -v a=$(wall "$1") -v b=$(wall "$2") 'BEGIN { printf "%.0f", (b - a) * 1000 }'; }
 
 [ "$0" = "$BASH_SOURCE" ] || return 0  # sourced for its helpers (ntn_cap.sh)
 case $1 in

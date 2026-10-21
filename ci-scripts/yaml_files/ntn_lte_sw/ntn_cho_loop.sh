@@ -27,21 +27,13 @@ cd "$(dirname "$0")"
 repo=$(cd ../../.. && pwd)
 mode=trans; [ -n "$REGEN" ] && mode=regen
 out=$repo/build/pcap-ntn-cho/$mode-$(date +%m%d-%H%M%S); mkdir -p $out
-N=${1:-10} PREP=${PREP:-100} T1=${T1:-120} T1_DUR=${T1_DUR:-30} BEAM=${BEAM:-122} RAMP=${RAMP:-10} END=${END:-165}
-U0=1792306580000  # UTC (ms since 1970) of the trace start
-# condEventT1: t1-Threshold in 10 ms since 1900, duration in 100 ms
-t1_threshold() { echo $(( (U0 + 2208988800000 + $1 * 1000) / 10 )); }
-export GNB1_EXTRA="--gNBs.[0].nr_cho_configuration.t1_threshold $(t1_threshold $T1)
-  --gNBs.[0].nr_cho_configuration.t1_duration $(( T1_DUR * 10 )) $GNB1_EXTRA"
+N=${1:-10}
+cho_setup
 replace_arg=1
 TARGET=${TARGET:-1} cands=1 other=
 [ -n "$THREE_SAT" ] && cands=1,2 other=$((3 - TARGET))
 tgt=ntn-gnb$((TARGET + 1)) gnbs="ntn-gnb1 ntn-gnb2${THREE_SAT:+ ntn-gnb3}"
 if [ -n "$REPLACE_T1" ]; then replace_arg="1,$(t1_threshold ${REPLACE_T1%,*}),$(( ${REPLACE_T1#*,} * 10 ))"; fi
-
-trace_time() { tn nr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
-wait_trace() { while awk "BEGIN { exit !($(trace_time) < $1) }"; do sleep 0.2; done; }
-wall() { awk '{ print $1 }' <<< "$1"; }
 
 for k in $(seq $N); do
   mkdir -p $out/logs/$k
@@ -49,12 +41,7 @@ for k in $(seq $N); do
   docker exec -d nr-ue sh -c "ping -D -I oaitun_ue1 -i 0.2 -W 1 192.168.96.1 > /tmp/ping.txt"
   wait_trace $PREP; tn ntn-gnb1 "ci trigger_cho 1,$cands" > /dev/null
   if [ -n "$REPLACE" ]; then wait_trace $REPLACE; tn ntn-gnb1 "ci replace_cho $replace_arg" > /dev/null; fi
-  wait_trace $BEAM; a=${NBR_ATT:-20}
-  for x in $(seq 0 ${STEP:-4} $a); do
-    wait_trace $(awk "BEGIN { print $BEAM + $x * $RAMP / $a }")
-    g=(-$x -$a -$a); g[$TARGET]=-$((a - x)); [ -n "$other" ] && g[$other]=-$((a - x + ${OTHER_GAP:-3}))
-    gains ${g[@]} > /dev/null 2>&1
-  done
+  cho_ramp $TARGET $other
   wait_trace $END
   for n in nr-ue $gnbs; do docker logs $n > $out/logs/$k/$n.log 2>&1 || true; done
   docker ps -a --format '{{.Names}} {{.Status}}' | grep -E 'nr-ue|ntn-gnb' > $out/logs/$k/status.txt || true
@@ -68,9 +55,7 @@ for k in $(seq $N); do
   [ -n "$REPLACE" ] && ! grep -q 'conditional handover modification' $out/logs/$k/ntn-gnb1.log && replaced=
   if [ -n "$exe" ] && [ -n "$done_" ] && [ -n "$replaced" ] && { [ -z "$other" ] || [ $cancel = cancel ]; }; then
     res=OK
-    # "now <hfn>.<frame> HFN.frame": the UE starts the trace clock at HFN 0, frame 0
-    t_exe=$(sed -n 's/.*now \([0-9]*\)\.\([0-9]*\) HFN.frame.*/\1 \2/p' <<< "$exe" | awk '{ printf "%.2f", $1 * 10.24 + $2 / 100 }')
-    intr=$(awk -v a=$(wall "$exe") -v b=$(wall "$done_") 'BEGIN { printf "%.0f", (b - a) * 1000 }')
+    t_exe=$(cho_exe_time "$exe") intr=$(cho_interruption "$exe" "$done_")
   fi
   gap=$(grep 'bytes from' $out/logs/$k/ping.txt | grep -o '^\[[0-9.]*\]' | tr -d '[]' |
     awk 'NR > 1 && $1 - p > g { g = $1 - p } { p = $1 } END { printf "%.1f", g }')
