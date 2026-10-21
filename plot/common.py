@@ -2,7 +2,7 @@
 
 Per run directory: ue.pcap (throughput), sgi.pcap (TCP RTT), ping_{dl,ul}.txt (ping RTT), ngap.pcap (handover
 times). Packet fields come from tshark and are cached as <run>/.plot-<pcap>.csv.
-The time axis is seconds from the first handover of each run.
+The time axis is seconds from the start of the traffic (events.txt).
 """
 
 import csv
@@ -57,7 +57,8 @@ def tcp_fields(run, pcap):
   """time, dst port, payload length, TSval, TSecr of the iperf3 packets."""
   rows = tshark(run, pcap, ["frame.time_epoch", "tcp.dstport", "tcp.len", "tcp.options.timestamp.tsval",
                             "tcp.options.timestamp.tsecr"], f"tcp.port=={PORT}")
-  return [(float(r[0]), int(r[1]), int(r[2]), r[3], r[4]) for r in rows]
+  # a packet cut short in the capture has no port or length
+  return [(float(r[0]), int(r[1]), int(r[2]), r[3], r[4]) for r in rows if r[1] and r[2]]
 
 
 def thpt(run, direction, bin_s=0.1):
@@ -117,12 +118,24 @@ def ho_spans(run, mode):
   return list(zip(cmd, notify))
 
 
+def t_start(run):
+  """Start of the traffic in epoch s: the iperf3 or ping start (events.txt)."""
+  ev = [line.split(" ", 1) for line in (run / "events.txt").read_text().splitlines()]
+  return float(next(t for t, e in ev if e.startswith(("iperf3 ", "ping "))))
+
+
 def fig3(title):
   """Three rows (one per run) sharing the time axis, single-column paper width."""
   fig, axes = plt.subplots(3, 1, sharex=True, sharey=True, figsize=(3.5, 4.2), constrained_layout=True)
   fig.suptitle(title, fontsize=9)
-  axes[-1].set_xlabel("Time from handover (s)")
+  axes[-1].set_xlabel("Time (s)")
   return fig, axes
+
+
+def gaps(t, y, max_s=1):
+  """NaN between samples more than max_s apart, so a line is not drawn across a silence."""
+  cut = np.flatnonzero(np.diff(t) > max_s) + 1
+  return np.insert(t.astype(float), cut, np.nan), np.insert(y.astype(float), cut, np.nan)
 
 
 def shade(ax, spans, t0):
@@ -153,14 +166,17 @@ def plot_bw(root, mode, ho, tag):
     for d in DIRS:
       fig, axes = fig3(f"{NAMES[mode]} {NAMES[m]} {NAMES[d]}: TCP throughput (ue.pcap)")
       for n, (ax, run) in enumerate(zip(axes, runs(root, f"tcp-{d}-{m}-{ho}")), 1):
-        spans = ho_spans(run, mode)
-        t0 = spans[0][0]
+        t0 = t_start(run)
         t, mbps = thpt(run, d)
-        shade(ax, spans, t0)
-        ax.plot(t - t0, mbps, color=TCP_COLOR, lw=1)
+        shade(ax, ho_spans(run, mode), t0)
+        ax.plot(t - t0, mbps, color=TCP_COLOR, lw=0.5, alpha=0.3, label="100 ms")
+        # centred 1 s mean, averaged over the bins inside the run at both ends
+        mean = np.convolve(mbps, np.ones(10), "same") / np.convolve(np.ones(len(mbps)), np.ones(10), "same")
+        ax.plot(t - t0, mean, color=TCP_COLOR, lw=1.2, label="1 s mean")
         ax.set_ylim(bottom=0)
         ax.set_ylabel("Mbps")
         label_run(ax, n)
+      fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
       save(fig, f"{tag}_bw_{m}_{d}")
 
 
@@ -172,13 +188,16 @@ def plot_rtt(root, mode, ho, tag):
       fig, axes = fig3(f"{NAMES[mode]} {NAMES[m]} {NAMES[d]}: RTT")
       tcp_runs, ping_runs = runs(root, f"tcp-{d}-{m}-{ho}"), runs(root, f"ping-{m}-{ho}")
       for n, (ax, tr, pr) in enumerate(zip(axes, tcp_runs, ping_runs), 1):
-        spans = ho_spans(tr, mode)
-        t0 = spans[0][0]
-        shade(ax, spans, t0)
-        t, rtt = tcp_rtt(tr)
+        t0 = t_start(tr)
+        shade(ax, ho_spans(tr, mode), t0)
+        t, rtt = gaps(*tcp_rtt(tr))
         ax.plot(t - t0, rtt, color=TCP_COLOR, lw=0.6, rasterized=True, label="TCP (sgi.pcap, with queueing)")
-        p0 = ho_spans(pr, mode)[0][0]
+        p0 = t_start(pr)
+        # the handovers of the ping run, which may fall a few seconds apart from the TCP run's (CHO)
+        for a, _ in ho_spans(pr, mode):
+          ax.axvline(a - p0, color=PING_COLOR, lw=0.6, ls=":")
         t, rtt, lost = ping(pr, d)
+        t, rtt = gaps(t, rtt)
         ax.plot(t - p0, rtt, color=PING_COLOR, lw=0.6, rasterized=True, label="ping (LEO end to end)")
         ax.set_yscale("log")
         ax.set_ylim(10, 3000)
