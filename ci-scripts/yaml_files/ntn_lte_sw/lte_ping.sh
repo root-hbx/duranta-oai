@@ -1,11 +1,11 @@
 #!/bin/bash
 # ICMP during LTE mobility, with packet captures (lte_cap.sh), under build-lte/pcap/ping-*
-#   lte_ping.sh base [runs]        RRC_CONNECTED on eNB1, no handover (30 s)
+#   lte_ping.sh base [runs]        RRC_CONNECTED on eNB1, no handover (40 s)
 #   lte_ping.sh connected [runs]   X2 handover to PCI 11 and back to PCI 10
 #   lte_ping.sh idle [runs]        attach via eNB1, UE restart, attach via eNB2 (break-before-make)
 # Traffic: ICMP every 10 ms from the UE (ping_ul) and from the PGW-U towards the UE (ping_dl).
 
-KIND=ping SGI_FILTER=icmp SNAP=0 MAC_SNAP=0 T_BASE=30 T_PRE=5 T_POST=10
+KIND=ping SGI_FILTER=icmp SNAP=0 MAC_SNAP=0 T_BASE=40 T_PRE=10 T_POST=15
 traffic() { ue_ip
   docker exec lte-ue ping -I oaitun_ue1 -i 0.01 -D -O 192.168.96.1 > $out/ping_ul$1.txt 2>&1 &
   docker exec upf ping -i 0.01 -D -O $ip > $out/ping_dl$1.txt 2>&1 & }
