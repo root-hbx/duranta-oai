@@ -38,5 +38,11 @@ sss_detection_result_t rx_sss_nr(nr_sss_params_t *params,
                                  pss_detection_result_t *pss,
                                  int target_Nid_cell,
                                  c16_t rxdataF[NR_N_SYMBOLS_SSB][params->nb_antennas_rx][params->ofdm_symbol_size]);
+double nr_sss_rsrp(int nb_antennas_rx,
+                   int ofdm_symbol_size,
+                   int ssb_start_subcarrier,
+                   int nid_cell,
+                   const c16_t rxdataF[nb_antennas_rx][ofdm_symbol_size],
+                   double *total);
 
 #endif /* SSS_NR_H */

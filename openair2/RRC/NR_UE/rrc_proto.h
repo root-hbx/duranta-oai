@@ -51,6 +51,10 @@ void handle_t300_expiry(NR_UE_RRC_INST_t *rrc);
 void handle_t430_expiry(NR_UE_RRC_INST_t *rrc);
 
 int get_event_time_to_trigger(long time_to_trigger);
+/** @return layer 3 filtered RSRP (dBm) of a cell, INT_MAX if not measured */
+int nr_rrc_get_l3_rsrp(const meas_t *cell);
+void nr_rrc_cho_tick(NR_UE_RRC_INST_t *rrc, int step_ms);
+void handle_t304_expiry(NR_UE_RRC_INST_t *rrc);
 void reset_rlf_timers_and_constants(NR_UE_Timers_Constants_t *tac);
 void set_default_timers_and_constants(NR_UE_Timers_Constants_t *tac);
 void nr_rrc_set_sib1_timers_and_constants(NR_UE_Timers_Constants_t *tac, NR_SIB1_t *sib1);

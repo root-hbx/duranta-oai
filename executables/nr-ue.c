@@ -25,6 +25,7 @@
 #include "PHY/MODULATION/nr_modulation.h"
 #include "common/utils/time_manager/time_manager.h"
 #include "log.h"
+#include "openair2/RRC/NR_UE/nr_ue_gnss.h"
 
 /*
  *  NR SLOT PROCESSING SEQUENCE
@@ -454,7 +455,7 @@ static uint64_t get_carrier_frequency(const int N_RB, const int mu, const uint32
   return carrier_freq;
 }
 
-static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE)
+static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE, int abs_subframe)
 {
   NR_DL_FRAME_PARMS *fp = &UE->frame_parms;
   // Start synchronization with a target gNB
@@ -499,7 +500,7 @@ static int handle_sync_req_from_mac(PHY_VARS_NR_UE *UE)
 
     // Apply Doppler based on NTN-Config for target cell
     if (UE->nrUE_config.ntn_config.is_targetcell)
-      apply_ntn_timing_advance_and_doppler(UE, fp, -1);
+      apply_ntn_doppler_target_cell(UE, fp, abs_subframe);
     // Apply NTN DL Doppler as initial FO
     UE->initial_fo = UE->dl_Doppler_shift;
 
@@ -619,6 +620,14 @@ void UE_dl_processing(void *arg) {
     pdsch_processing(UE, proc, phy_data);
 
   TracyCZoneEnd(ctx);
+}
+
+/* TX advance of the slot duration_rx_to_tx slots after the RX slot its timing is derived from. TS 38.211 4.3.1
+ * refers it to the DL timing of its own slot, which in NTN has drifted by then (tens of us/s, 27 ms Koffset) */
+static int get_tx_advance(const PHY_VARS_NR_UE *UE, const NR_DL_FRAME_PARMS *fp, int duration_rx_to_tx)
+{
+  const double drift = UE->ntn_dl_drift * 1e-6 * duration_rx_to_tx * fp->samples_per_subframe / fp->slots_per_subframe;
+  return UE->timing_advance + UE->timing_advance_ntn - lround(drift);
 }
 
 void dummyWrite(PHY_VARS_NR_UE *UE, openair0_timestamp_t timestamp, int writeBlockSize)
@@ -793,6 +802,9 @@ void *UE_thread(void *arg)
   NR_UE_MAC_INST_t *mac = get_mac_inst(UE->Mod_id);
 
   bool syncRunning = false;
+  // a failed sync shifts the next capture by one frame: with a 20 ms SSB period, an SSB cut at the end of the
+  // 2-frame capture would otherwise stay cut in every retry, as the capture keeps its phase
+  bool shift_sync_capture = false;
   const int nb_slot_frame = fp->slots_per_frame;
   int absolute_slot = 0, decoded_frame_rx = MAX_FRAME_NUMBER - 1, skipped_frames = 0;
   int tx_wait_for_dlsch[NR_MAX_SLOTS_PER_FRAME];
@@ -804,6 +816,7 @@ void *UE_thread(void *arg)
     dynamic_barrier_init(&UE->process_slot_tx_barriers[i]);
   }
   int shiftForNextFrame = 0;
+  int resyncShift = 0;
   int intialSyncOffset = 0;
   openair0_timestamp_t sync_timestamp;
   bool stats_printed = false;
@@ -826,6 +839,7 @@ void *UE_thread(void *arg)
 
       if (res) {
         syncRunning = false;
+        shift_sync_capture = !UE->is_synchronized && UE->sl_mode != 2;
         for (int i = 0; i < fp->nb_antennas_rx; i++)
           free(sync_buf[i]);
         if (UE->is_synchronized) {
@@ -846,6 +860,11 @@ void *UE_thread(void *arg)
           syncData_t *syncMsg = (syncData_t *)NotifiedFifoData(res);
           decoded_frame_rx = (decoded_frame_rx + skipped_frames) % MAX_FRAME_NUMBER;
           intialSyncOffset = syncMsg->rx_offset;
+          // the frame of the detected SSB started before the capture: resynchronize to the next frame
+          if (intialSyncOffset < 0) {
+            intialSyncOffset += fp->samples_per_frame;
+            decoded_frame_rx = (decoded_frame_rx + 1) % MAX_FRAME_NUMBER;
+          }
         }
         delNotifiedFIFO_elt(res);
         stream_status = STREAM_STATUS_UNSYNC;
@@ -874,6 +893,13 @@ void *UE_thread(void *arg)
     AssertFatal(!syncRunning, "At this point synchronization can't be running\n");
 
     if (!UE->is_synchronized) {
+      /* what RRC sent to MAC meanwhile, e.g., a re-establishment after a failed handover: its synchronization
+       * request replaces the ongoing one */
+      for (notifiedFIFO_elt_t *elt; (elt = pollNotifiedFIFO(&mac->input_nf));) {
+        process_msg_rcc_to_mac(NotifiedFifoData(elt), UE->Mod_id);
+        delNotifiedFIFO_elt(elt);
+      }
+      handle_sync_req_from_mac(UE, absolute_slot / fp->slots_per_subframe);
       // seed the out-of-sync tick once from the last known synchronized frame/hfn:
       // absolute_slot doesn't advance while out of sync, so failed sync attempts must not re-seed
       if (!out_of_sync_rrc_tick_seeded) {
@@ -882,6 +908,11 @@ void *UE_thread(void *arg)
         out_of_sync_rrc_tick_seeded = true;
       }
       int sz = compute_sync_size(UE);
+      if (shift_sync_capture) {
+        LOG_I(PHY, "Sync failed, shifting the next capture by one frame\n");
+        readFrame(UE, &sync_timestamp, duration_rx_to_tx, sz / 2, NULL);
+        out_of_sync_rrc_timer_tick(UE, 1, &out_of_sync_rrc_tick_frame, &out_of_sync_rrc_tick_hfn);
+      }
       for (int i = 0; i < fp->nb_antennas_rx; i++)
         sync_buf[i] = malloc(sz * sizeof(**sync_buf));
       readFrame(UE, &sync_timestamp, duration_rx_to_tx, sz, sync_buf);
@@ -911,9 +942,6 @@ void *UE_thread(void *arg)
       stream_status = STREAM_STATUS_SYNCING;
       syncInFrame(UE, &sync_timestamp, duration_rx_to_tx, intialSyncOffset);
       nrue_ru_write_reorder_clear_context(UE);
-      shiftForNextFrame = -(skipped_frames)*UE->max_pos_acc
-                          * get_nrUE_params()->time_sync_I; // compensate for the time drift that happened during initial sync
-      LOG_I(PHY, "max_pos_acc = %d, shiftForNextFrame = %d\n", UE->max_pos_acc, shiftForNextFrame);
       // read in first symbol
       int ret = nrue_ru_read(UE,
                              &sync_timestamp,
@@ -951,6 +979,15 @@ void *UE_thread(void *arg)
         apply_ntn_timing_advance_and_doppler(UE, fp, abs_subframe_tx);
         ntn_targetcell = false;
       }
+      // a resync to an NTN cell, e.g., after a handover to another satellite: its DL timing drift, not the one
+      // tracked on the previous cell
+      if (ntn_koffset && get_nrUE_params()->time_sync_I)
+        UE->max_pos_acc = lround(UE->ntn_dl_drift * 1e-6 * fp->samples_per_frame / get_nrUE_params()->time_sync_I);
+      // compensate for the time drift that happened during initial sync from the first slot, as an early PRACH
+      // (e.g., a handover) is timed from it
+      resyncShift = -round(skipped_frames * UE->max_pos_acc * get_nrUE_params()->time_sync_I);
+      shiftForNextFrame = -round(UE->max_pos_acc * get_nrUE_params()->time_sync_I);
+      LOG_I(PHY, "max_pos_acc = %d, resyncShift = %d\n", UE->max_pos_acc, resyncShift);
       UE->timing_advance = 0;
       // We have resynchronized, maybe after RF loss so we need to purge any existing context
       memset(tx_wait_for_dlsch, 0, sizeof(tx_wait_for_dlsch));
@@ -961,7 +998,7 @@ void *UE_thread(void *arg)
     }
 
     /* check if MAC has sent sync request */
-    if (handle_sync_req_from_mac(UE) == 0)
+    if (handle_sync_req_from_mac(UE, absolute_slot / fp->slots_per_subframe) == 0)
       continue;
 
     // start of normal case, the UE is in sync
@@ -1010,6 +1047,12 @@ void *UE_thread(void *arg)
         UE->timing_advance_ntn -= 2 * shiftForNextFrame;
       shiftForNextFrame = -round(UE->max_pos_acc * get_nrUE_params()->time_sync_I);
     }
+    if (resyncShift) {
+      iq_shift_to_apply += resyncShift;
+      if (ntn_koffset && get_nrUE_params()->autonomous_ta)
+        UE->timing_advance_ntn -= 2 * resyncShift;
+      resyncShift = 0;
+    }
 
     // Calculate new TA based on SIB19 information for each subframe in NTN mode, if "autonomous_ta" is not enabled
     if (ntn_koffset && !ntn_targetcell && !get_nrUE_params()->autonomous_ta
@@ -1024,6 +1067,7 @@ void *UE_thread(void *arg)
     metadata meta = {.slot =  curMsg.proc.nr_slot_rx, .frame =  curMsg.proc.frame_rx};
     UEscopeCopyWithMetadata(UE, ueTimeDomainSamples, rxp[0] - firstSymSamp, sizeof(c16_t), 1, readBlockSize, 0, &meta);
     AssertFatal(readBlockSize == tmp, "read to rf board failed %d", tmp);
+    nr_ue_gnss_set_rx_time(rx_timestamp, fp->samples_per_subframe * 1000.0);
     struct timespec current_time;
     if (clock_gettime(CLOCK_REALTIME, &current_time)) {
       LOG_E(PHY, "clock_gettime failed\n");
@@ -1053,7 +1097,7 @@ void *UE_thread(void *arg)
 
     // but use current UE->timing_advance value to compute writeBlockSize
     int writeBlockSize = get_samples_per_slot((slot_nr + duration_rx_to_tx) % nb_slot_frame, fp) - iq_shift_to_apply;
-    int new_timing_advance = UE->timing_advance + UE->timing_advance_ntn;
+    int new_timing_advance = get_tx_advance(UE, fp, duration_rx_to_tx);
     if (new_timing_advance != timing_advance) {
       writeBlockSize -= new_timing_advance - timing_advance;
       timing_advance = new_timing_advance;

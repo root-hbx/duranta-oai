@@ -602,6 +602,9 @@ typedef struct NR_UE_MAC_INST_s {
   nr_ue_if_module_t       *if_module;
   nr_phy_config_t         phy_config;
   nr_synch_request_t      synch_request;
+  // NTN configuration of the serving cell (at the access and with its SIB19), for the cell selection of a
+  // re-establishment (e.g., not of the target of a failed handover)
+  fapi_nr_ntn_config_t    serving_ntn_config;
 
   // order lc info
   A_SEQUENCE_OF(nr_lcordered_info_t) lc_ordered_list;

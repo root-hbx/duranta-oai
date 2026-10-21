@@ -48,6 +48,8 @@
 #define NGAP_HANDOVER_CANCEL(mSGpTR) (mSGpTR)->ittiMsg.ngap_handover_cancel
 #define NGAP_HANDOVER_CANCEL_ACK(mSGpTR) (mSGpTR)->ittiMsg.ngap_handover_cancel_ack
 #define NGAP_PATH_SWITCH_REQ(mSGpTR) (mSGpTR)->ittiMsg.ngap_path_switch_req
+// release of the NGAP UE context without signalling, e.g., at the source of an Xn handover
+#define NGAP_UE_CONTEXT_LOCAL_RELEASE(mSGpTR) (mSGpTR)->ittiMsg.ngap_ue_context_local_release
 #define NGAP_PATH_SWITCH_REQ_ACK(mSGpTR) (mSGpTR)->ittiMsg.ngap_path_switch_req_ack
 
 #define NGAP_UE_CONTEXT_RELEASE_REQ(mSGpTR)     (mSGpTR)->ittiMsg.ngap_ue_release_req

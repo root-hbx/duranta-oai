@@ -20,6 +20,7 @@
 #include "PHY/NR_REFSIG/nr_refsig.h"
 #include "PHY/NR_UE_TRANSPORT/nr_transport_proto_ue.h"
 #include "PHY/NR_UE_ESTIMATION/nr_estimation.h"
+#include "PHY/nr_phy_common/inc/nr_phy_common.h"
 
 #define K1 ((long long int) 512)
 #define K2 ((long long int) (1024-K1))
@@ -241,6 +242,22 @@ static void reset_neighboring_cell_info(fapi_nr_neighboring_cell_t *neighbor_cel
     neighbor_cell->Nid_cell = -1;
 }
 
+/* start of the PSS search window of a cell in the samples of a slot (with the headroom of create_meas_task_args()):
+ * the SSB of a cell of another satellite drifts in time (NTN), follow it into the next or previous slot */
+static void set_pss_search_start(const NR_DL_FRAME_PARMS *fp, neighboring_cell_info_t *info, int slot, int start)
+{
+  const int slot_len = get_samples_per_slot(slot, fp);
+  if (start >= slot_len) {
+    start -= slot_len;
+    slot = (slot + 1) % fp->slots_per_frame;
+  } else if (start < 0) {
+    slot = (slot + fp->slots_per_frame - 1) % fp->slots_per_frame;
+    start += get_samples_per_slot(slot, fp);
+  }
+  info->pss_search_start = start;
+  info->ssb_slot = slot;
+}
+
 static bool search_neighboring_cell(UE_nr_rxtx_proc_t *proc,
                                     NR_DL_FRAME_PARMS *frame_parms,
                                     fapi_nr_neighboring_cell_t *nr_neighboring_cell,
@@ -320,13 +337,16 @@ static bool search_neighboring_cell(UE_nr_rxtx_proc_t *proc,
           search_params.pss_res.avg);
 
     // Update search window
-    neighboring_cell_info->pss_search_start = search_params.pss_res.pos - 16;
+    set_pss_search_start(frame_parms, neighboring_cell_info, proc->nr_slot_rx, search_params.pss_res.pos - 16);
     neighboring_cell_info->pss_search_length = 32 + frame_parms->ofdm_symbol_size;
-    neighboring_cell_info->ssb_slot = proc->nr_slot_rx;
   }
 
   return cell_detected;
 }
+
+/* the SSS of a measured cell is at least 1/NR_SSS_RSRP_MIN_RATIO of the power of its resource elements: otherwise,
+ * other signals (e.g., of the serving cell) at a false PSS peak */
+#define NR_SSS_RSRP_MIN_RATIO 32
 
 static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
                                fapi_nr_neighboring_cell_t *nr_neighboring_cell,
@@ -334,7 +354,8 @@ static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
                                c16_t **rxdata,
                                c16_t rxdataF[][frame_parms->nb_antennas_rx][frame_parms->ofdm_symbol_size],
                                c16_t pssTime[][frame_parms->ofdm_symbol_size],
-                               int slot)
+                               int slot,
+                               double *rsrp)
 {
   int known_pci = nr_neighboring_cell->Nid_cell;
 
@@ -398,8 +419,17 @@ static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
                                             .exclude_nid_cells = NULL,
                                             .num_exclude_nid_cells = 0};
   sss_detection_result_t res = rx_sss_nr(&p_sss, &pss_res, known_pci, rxdataF);
+  double total = 0;
+  if (res.success) {
+    *rsrp = nr_sss_rsrp(frame_parms->nb_antennas_rx,
+                        frame_parms->ofdm_symbol_size,
+                        frame_parms->ssb_start_subcarrier,
+                        known_pci,
+                        rxdataF[sss_symbol],
+                        &total);
+  }
 
-  if (!res.success) {
+  if (!res.success || *rsrp <= 0 || *rsrp * NR_SSS_RSRP_MIN_RATIO < total) {
     if (neighboring_cell_info->valid_meas)
       neighboring_cell_info->consec_fail++;
     LOG_D(NR_PHY, "Known PCI validation failed for PCI=%d, consec_fail=%d\n", known_pci, neighboring_cell_info->consec_fail);
@@ -410,9 +440,8 @@ static bool validate_known_pci(NR_DL_FRAME_PARMS *frame_parms,
   nr_neighboring_cell->is_candidate = false;
   neighboring_cell_info->consec_fail = 0;
   neighboring_cell_info->valid_meas = true;
-  neighboring_cell_info->pss_search_start += pss_res.pos - 16;
+  set_pss_search_start(frame_parms, neighboring_cell_info, slot, neighboring_cell_info->pss_search_start + pss_res.pos - 16);
   neighboring_cell_info->pss_search_length = 32 + frame_parms->ofdm_symbol_size;
-  neighboring_cell_info->ssb_slot = slot;
 
   return true;
 }
@@ -501,7 +530,32 @@ static void search_new_neighboring_cell(UE_nr_rxtx_proc_t *proc, PHY_VARS_NR_UE 
   }
 }
 
-static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_NR_UE *ue, c16_t **rxdata)
+/* frequency offset of a neighbour cell still in the received samples: as the serving cell (DL Doppler and residual
+ * offset), or with its own ntn-Config the Doppler of its satellite; minus what the radio compensates without
+ * continuous compensation */
+static double get_neighbour_freq_offset(const PHY_VARS_NR_UE *ue,
+                                        const UE_nr_rxtx_proc_t *proc,
+                                        const fapi_nr_neighboring_cell_t *cell)
+{
+  const NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
+  const double serving = ue->dl_Doppler_shift + ue->freq_offset;
+  double fo = serving;
+  if (cell && cell->has_ntn_config) {
+    const int abs_subframe = proc->hfn_rx * 10240 + proc->frame_rx * 10 + proc->nr_slot_rx / fp->slots_per_subframe;
+    fo = get_ntn_neighbour_dl_doppler(ue, &cell->ntn_config, fp, abs_subframe) + ue->freq_offset;
+  }
+  if (!ue->cont_fo_comp)
+    fo -= serving;
+  return fo;
+}
+
+static void compensate_neighbour_freq_offset(const PHY_VARS_NR_UE *ue, double fo, c16_t **in, c16_t **out, int size)
+{
+  for (int i = 0; i < ue->frame_parms.nb_antennas_rx; i++)
+    nr_fo_compensation(fo, ue->frame_parms.samples_per_subframe, 0, in[i], out[i], size);
+}
+
+static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_NR_UE *ue, c16_t **rxdata_in, uint32_t rxdata_size)
 {
   // Generate PSS time-domain sequences once for all neighbor cells
   NR_DL_FRAME_PARMS *frame_parms = &ue->frame_parms;
@@ -516,6 +570,10 @@ static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_N
 
   const uint32_t rxdataF_sz = frame_parms->ofdm_symbol_size;
   __attribute__((aligned(32))) c16_t rxdataF[NR_N_SYMBOLS_SSB][frame_parms->nb_antennas_rx][rxdataF_sz];
+  // the samples of one cell, compensated with its frequency offset
+  c16_t *rxdata[frame_parms->nb_antennas_rx];
+  for (int i = 0; i < frame_parms->nb_antennas_rx; i++)
+    rxdata[i] = malloc16_clear(rxdata_size * sizeof(c16_t));
 
   for (int cell_idx = 0; cell_idx < NUMBER_OF_NEIGHBORING_CELLS_MAX; cell_idx++) {
     fapi_nr_neighboring_cell_t *neighbor_cell = &ue->nrUE_config.meas_config.nr_neighboring_cell[cell_idx];
@@ -532,7 +590,10 @@ static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_N
     if (neighboring_cell_info->ssb_slot != -1 && neighboring_cell_info->ssb_slot != proc->nr_slot_rx)
       continue;
 
-    if (!validate_known_pci(frame_parms, neighbor_cell, neighboring_cell_info, rxdata, rxdataF, pssTime, proc->nr_slot_rx)) {
+    compensate_neighbour_freq_offset(ue, get_neighbour_freq_offset(ue, proc, neighbor_cell), rxdata_in, rxdata, rxdata_size);
+
+    double rsrp = 0;
+    if (!validate_known_pci(frame_parms, neighbor_cell, neighboring_cell_info, rxdata, rxdataF, pssTime, proc->nr_slot_rx, &rsrp)) {
       if (neighboring_cell_info->consec_fail >= NEIGHBOR_CELL_MAX_CONSECUTIVE_FAILURES) {
         if (neighbor_cell->is_candidate) {
           LOG_D(NR_PHY, "Neighbor cell confirmation failed for candidate with PCI=%d\n", neighbor_cell->Nid_cell);
@@ -548,17 +609,18 @@ static void do_neighboring_cell_measurements(UE_nr_rxtx_proc_t *proc, PHY_VARS_N
     }
 
     // RSRP measurements
-    uint8_t sss_symbol = SSS_SYMBOL_NB - PSS_SYMBOL_NB;
-    neighboring_cell_info->ssb_rsrp = nr_ue_calculate_ssb_rsrp(frame_parms, rxdataF[sss_symbol], frame_parms->ssb_start_subcarrier);
+    neighboring_cell_info->ssb_rsrp = rsrp;
 
     neighboring_cell_info->ssb_rsrp_dBm =
-        10 * log10(neighboring_cell_info->ssb_rsrp) + 30 - SQ15_SQUARED_NORM_FACTOR_DB
+        10 * log10(rsrp) + 30 - SQ15_SQUARED_NORM_FACTOR_DB
         - ((int)openair0_cfg_g[ue->rf_map.card].rx_gain[0] - (int)openair0_cfg_g[ue->rf_map.card].rx_gain_offset[0])
         - dB_fixed(ue->frame_parms.ofdm_symbol_size);
 
     // Send SS measurements to RRC directly
     send_neighbor_cell_meas(ue, proc, neighbor_cell->Nid_cell, neighboring_cell_info->ssb_rsrp_dBm);
   }
+  for (int i = 0; i < frame_parms->nb_antennas_rx; i++)
+    free(rxdata[i]);
 }
 
 void nr_ue_meas_neighboring_cell(void *arg)
@@ -567,7 +629,7 @@ void nr_ue_meas_neighboring_cell(void *arg)
   c16_t *rx[args->nb_ant];
   for (int i = 0; i < args->nb_ant; i++)
     rx[i] = args->rxdata_ant + i * args->rxdata_size;
-  do_neighboring_cell_measurements(&args->proc, args->ue, rx);
+  do_neighboring_cell_measurements(&args->proc, args->ue, rx, args->rxdata_size);
 
   args->ue->measurements.meas_request_pending = false;
   free(args);
@@ -579,6 +641,7 @@ void nr_ue_search_new_neighboring_cell(void *arg)
   c16_t *rx[args->nb_ant];
   for (int i = 0; i < args->nb_ant; i++)
     rx[i] = args->rxdata_ant + i * args->rxdata_size;
+  compensate_neighbour_freq_offset(args->ue, get_neighbour_freq_offset(args->ue, &args->proc, NULL), rx, rx, args->rxdata_size);
   search_new_neighboring_cell(&args->proc, args->ue, rx, args->rxdata_size);
 
   args->ue->measurements.search_new_cells_pending = false;

@@ -54,6 +54,10 @@
 #include "NR_DRB-ToAddModList.h"
 #include "NR_SecurityConfig.h"
 #include "NR_RRCReconfiguration-v1530-IEs.h"
+#include "NR_RRCReconfiguration-v1540-IEs.h"
+#include "NR_RRCReconfiguration-v1560-IEs.h"
+#include "NR_RRCReconfiguration-v1610-IEs.h"
+#include "NR_ConditionalReconfiguration-r16.h"
 #include "NR_UL-DCCH-Message.h"
 #include "NR_SDAP-Config.h"
 #include "NR_RRCReconfigurationComplete.h"
@@ -1165,7 +1169,19 @@ static NR_MeasObjectToAddMod_t *get_MeasObject(const struct NR_MeasTiming__frequ
   return mo;
 }
 
-static NR_MeasIdToAddMod_t *get_MeasId(NR_MeasId_t measId, NR_ReportConfigId_t reportConfigId, NR_MeasObjectId_t measObjectId)
+/** @brief Measurement object of one neighbour cell, with the timing of the serving cell measurement timing mt */
+NR_MeasObjectToAddMod_t *get_neighbour_MeasObject(const NR_MeasTiming_t *mt, int band, int ssb_arfcn, int pci, NR_MeasObjectId_t id)
+{
+  NR_MeasObjectToAddMod_t *mo = get_MeasObject(mt->frequencyAndTiming, band, ssb_arfcn, id);
+  NR_MeasObjectNR_t *monr = mo->measObject.choice.measObjectNR;
+  monr->cellsToAddModList = calloc_or_fail(1, sizeof(*monr->cellsToAddModList));
+  NR_CellsToAddMod_t *cell = calloc_or_fail(1, sizeof(*cell));
+  cell->physCellId = pci;
+  ASN_SEQUENCE_ADD(&monr->cellsToAddModList->list, cell);
+  return mo;
+}
+
+NR_MeasIdToAddMod_t *get_MeasId(NR_MeasId_t measId, NR_ReportConfigId_t reportConfigId, NR_MeasObjectId_t measObjectId)
 {
   NR_MeasIdToAddMod_t *measid = calloc_or_fail(1, sizeof(NR_MeasIdToAddMod_t));
   measid->measId = measId;
@@ -1393,6 +1409,56 @@ void fill_removal_lists_from_source_measConfig(NR_MeasConfig_t *currentMC, byte_
   // Clean up allocated memory
   ASN_STRUCT_FREE(asn_DEF_NR_HandoverPreparationInformation, hpi);
   ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rrcReconf);
+}
+
+/** @brief RRCReconfiguration (encoded) of a HandoverCommand, e.g., the condRRCReconfig of a conditional handover */
+byte_array_t get_RRCReconfiguration_from_HandoverCommand(const byte_array_t handoverCommand)
+{
+  byte_array_t msg = {0};
+  NR_HandoverCommand_t *hc = NULL;
+  asn_dec_rval_t dec = uper_decode_complete(NULL, &asn_DEF_NR_HandoverCommand, (void **)&hc, handoverCommand.buf, handoverCommand.len);
+  if (dec.code == RC_OK && hc->criticalExtensions.present == NR_HandoverCommand__criticalExtensions_PR_c1
+      && hc->criticalExtensions.choice.c1->present == NR_HandoverCommand__criticalExtensions__c1_PR_handoverCommand) {
+    const OCTET_STRING_t *m = &hc->criticalExtensions.choice.c1->choice.handoverCommand->handoverCommandMessage;
+    msg = create_byte_array(m->size, m->buf);
+  } else {
+    LOG_E(NR_RRC, "Failed to decode Handover Command\n");
+  }
+  ASN_STRUCT_FREE(asn_DEF_NR_HandoverCommand, hc);
+  return msg;
+}
+
+/** @brief RRCReconfiguration with a conditional reconfiguration (TS 38.331 5.3.5.13) and the measurement
+ * configuration of its execution conditions; meas_config and cond_reconfig stay owned by the caller */
+byte_array_t do_RRCReconfiguration_cho(uint8_t transaction_id, NR_MeasConfig_t *meas_config, NR_ConditionalReconfiguration_r16_t *cond_reconfig)
+{
+  byte_array_t msg = {0};
+  NR_DL_DCCH_Message_t dl_dcch_msg = {0};
+  dl_dcch_msg.message.present = NR_DL_DCCH_MessageType_PR_c1;
+  asn1cCalloc(dl_dcch_msg.message.choice.c1, c1);
+  c1->present = NR_DL_DCCH_MessageType__c1_PR_rrcReconfiguration;
+  asn1cCalloc(c1->choice.rrcReconfiguration, rrcReconf);
+  rrcReconf->rrc_TransactionIdentifier = transaction_id;
+  rrcReconf->criticalExtensions.present = NR_RRCReconfiguration__criticalExtensions_PR_rrcReconfiguration;
+  asn1cCalloc(rrcReconf->criticalExtensions.choice.rrcReconfiguration, ie);
+  ie->measConfig = meas_config;
+  asn1cCalloc(ie->nonCriticalExtension, v1530);
+  asn1cCalloc(v1530->nonCriticalExtension, v1540);
+  asn1cCalloc(v1540->nonCriticalExtension, v1560);
+  asn1cCalloc(v1560->nonCriticalExtension, v1610);
+  v1610->conditionalReconfiguration_r16 = cond_reconfig;
+
+  if (LOG_DEBUGFLAG(DEBUG_ASN1))
+    xer_fprint(stdout, &asn_DEF_NR_DL_DCCH_Message, (void *)&dl_dcch_msg);
+  int val = uper_encode_to_new_buffer(&asn_DEF_NR_DL_DCCH_Message, NULL, &dl_dcch_msg, (void **)&msg.buf);
+  if (val > 0)
+    msg.len = val;
+  else
+    LOG_E(NR_RRC, "Failed to encode RRCReconfiguration with conditionalReconfiguration\n");
+  ie->measConfig = NULL;
+  v1610->conditionalReconfiguration_r16 = NULL;
+  ASN_STRUCT_FREE_CONTENTS_ONLY(asn_DEF_NR_DL_DCCH_Message, &dl_dcch_msg);
+  return msg;
 }
 
 byte_array_t doRRCReconfiguration_from_HandoverCommand(const byte_array_t handoverCommand)

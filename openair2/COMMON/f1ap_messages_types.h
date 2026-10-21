@@ -496,6 +496,15 @@ typedef struct f1ap_drb_to_release_s {
   int id;
 } f1ap_drb_to_release_t;
 
+/* Time-based CHO window of a candidate UE (XnAP CHO Time Based Information, 38.423). F1AP has no such IE:
+ * only passed between a gNB-CU and gNB-DU in one process, not encoded. */
+typedef struct f1ap_cho_time_window_s {
+  // condEventT1 t1-Threshold, in 10 ms since 1900-01-01 UTC
+  uint64_t start;
+  // condEventT1 duration, in 100 ms
+  uint16_t duration;
+} f1ap_cho_time_window_t;
+
 typedef struct f1ap_ue_context_setup_req_s {
   uint32_t gNB_CU_ue_id;
   uint32_t *gNB_DU_ue_id;
@@ -515,6 +524,8 @@ typedef struct f1ap_ue_context_setup_req_s {
   byte_array_t *rrc_container;
 
   uint64_t *gnb_du_ue_agg_mbr_ul; // C-ifDRBSetup
+
+  f1ap_cho_time_window_t *cho_time_window; // not encoded, see f1ap_cho_time_window_t
 } f1ap_ue_context_setup_req_t;
 
 typedef struct f1ap_ue_context_setup_resp_s {

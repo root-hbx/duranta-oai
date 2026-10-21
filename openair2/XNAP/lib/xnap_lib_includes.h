@@ -31,6 +31,9 @@
 #include "XNAP_Dynamic5QIDescriptor.h"
 #include "XNAP_AllocationandRetentionPriority.h"
 #include "XNAP_LastVisitedCell-Item.h"
+#include "XNAP_ProtocolExtensionContainer.h"
+#include "XNAP_ProtocolExtensionField.h"
+#include "XNAP_CHOTimeBasedInformation.h"
 
 #include "XNAP_PDUSessionResourcesAdmitted-Item.h"
 #include "XNAP_QoSFlowsAdmitted-Item.h"

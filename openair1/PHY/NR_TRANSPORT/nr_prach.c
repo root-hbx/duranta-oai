@@ -256,6 +256,25 @@ bool get_next_nr_prach(spsc_q_t *q, const fsn_t *now, prach_item_t *p)
   return spsc_q_get_if(q, get_current_prach, (void *)now, p, sizeof(*p));
 }
 
+/* How early a preamble may arrive: the value of the MAC (UE timing error and network Common TA error), widened to
+ * 1.5 times the earliest arrival of the recent preambles if the MAC value turns out too small. */
+static int nr_prach_early_ns(const PHY_VARS_gNB *gNB)
+{
+  return max(gNB->prach_early_ff_ns, gNB->prach_early_obs_ns * 3 / 2);
+}
+
+void nr_prach_early_feedback(PHY_VARS_gNB *gNB, int delay_ns)
+{
+  int obs = gNB->prach_early_obs_ns - gNB->prach_early_obs_ns / 16;
+  if (-delay_ns > obs)
+    obs = -delay_ns;
+  const int old_ns = nr_prach_early_ns(gNB);
+  gNB->prach_early_obs_ns = obs;
+  const int new_ns = nr_prach_early_ns(gNB);
+  if (new_ns != old_ns)
+    LOG_D(NR_PHY_RACH, "PRACH early window %d -> %d ns (arrival %d ns, MAC %d ns)\n", old_ns, new_ns, delay_ns, gNB->prach_early_ff_ns);
+}
+
 void nr_schedule_rx_prach(PHY_VARS_gNB *gNB, int SFN, int Slot, nfapi_nr_prach_pdu_t *prach_pdu)
 {
   const int fmt = prach_pdu->prach_format;
@@ -275,6 +294,7 @@ void nr_schedule_rx_prach(PHY_VARS_gNB *gNB, int SFN, int Slot, nfapi_nr_prach_p
       .prach_sequence_length = cfg->prach_sequence_length.value,
       .restricted_set = cfg->restricted_set_config.value,
       .numerology_index = fp->numerology_index,
+      .early_ns = nr_prach_early_ns(gNB),
       .nb_rx = num_rx_per_beam,
       .Xu = gNB->X_u,
       .rx_prach = &gNB->rx_prach,
@@ -405,6 +425,20 @@ void rx_nr_prach_ru_rep(prach_item_t *p,
   rx_nr_prach_ru_internal_rep(p, 0, rxdata, fp, N_TA_offset, rep, &params, rxsigF);
 }
 
+// duration of one PRACH correlation bin in ns, see the TA conversion at the end of rx_nr_prach()
+static double prach_bin_ns(int prach_sequence_length, int prach_fmt, int mu)
+{
+  if (prach_sequence_length != 0)
+    return 2048e9 / (30.72e6 * (1 << mu) * 256);
+  if (prach_fmt == 3)
+    return 6144e9 / (30.72e6 * 1024);
+  return 24576e9 / (30.72e6 * 1024);
+}
+
+/* The correlation window of each preamble starts early_ns before its zero delay: a UE that pre-compensates its
+ * timing advance (NTN, 38.300 16.14.2.2) can arrive slightly early, which would otherwise fall between two zones or
+ * into the end of another preamble's zone. The window keeps its length (no overlap with other zones), an early
+ * preamble is reported with delay 0 and the residual is left to the TA commands after the access. */
 rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
 {
   rx_prach_out_t out = {};
@@ -443,10 +477,13 @@ rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
 
   if (NCS2 == 0)
     NCS2 = N_ZC;
+  const double bin_ns = prach_bin_ns(in->prach_sequence_length, prach_fmt, in->numerology_index);
+  const int early_bins = min((int)ceil(in->early_ns / bin_ns), NCS2 - 1);
 
   int preamble_offset = 0, preamble_offset_old = 99;
 
   int16_t preamble_shift = 0;
+  int max_delay_bin = 0;
   const int dft_sz = N_ZC == 839 ? 1024 : 256;
   int32_t prach_ifft[dft_sz] __attribute__((aligned(32)));
   for (int preamble_index = 0; preamble_index < 64; preamble_index++) {
@@ -599,13 +636,13 @@ rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
 
     int preamble_shift2 = preamble_shift == 0 ? 0 : (preamble_shift << log2_ifft_size) / N_ZC;
 
-    for (int i = 0; i < NCS2; i++) {
-      const int peak_bin = preamble_shift2 + i;
+    for (int i = -early_bins; i < NCS2 - early_bins; i++) {
+      const int peak_bin = (preamble_shift2 + i + dft_sz) % dft_sz;
       const int levdB = dB_fixed_times10(prach_ifft[peak_bin]);
-      if (levdB > out.max_preamble_energy || (levdB == out.max_preamble_energy && out.max_preamble_delay_raw > i)) {
+      if (levdB > out.max_preamble_energy || (levdB == out.max_preamble_energy && max_delay_bin > i)) {
         LOG_D(NR_PHY_RACH, "preamble_index %d, delay %d en %d dB > %d dB\n", preamble_index, i, levdB, out.max_preamble_energy);
         out.max_preamble_energy = levdB;
-        out.max_preamble_delay_raw = i;
+        max_delay_bin = i;
         out.max_preamble = preamble_index;
       }
     }
@@ -626,6 +663,8 @@ rx_prach_out_t rx_nr_prach(const prach_item_t *in, int occasion)
   // Format >3: 2048/2^mu samples @ 30.72 Ms/s, 2048/2^mu * 4 samples @ 122.88 Ms/s
   // By solving:
   // max_preamble_delay * ( (2048/2^mu*(fs/30.72M)) / 256 ) / fs = TA * 16 * 64 / 2^mu * Tc
+  out.max_preamble_delay_raw = max(max_delay_bin, 0);
+  out.delay_ns = lround(max_delay_bin * bin_ns);
   const uint32_t raw_delay = out.max_preamble_delay_raw;
   const int mu = in->numerology_index;
   if (in->prach_sequence_length == 0) {

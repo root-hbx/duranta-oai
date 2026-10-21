@@ -226,6 +226,7 @@ bool eq_config_request(const nfapi_nr_config_request_scf_t *unpacked_req, const 
   }
 
   EQ_TLV(unpacked_req->ssb_table.case_v3, req->ssb_table.case_v3);
+  EQ_TLV(unpacked_req->prach_config.early_margin_ns_ve, req->prach_config.early_margin_ns_ve);
 
   if (req->cell_config.frame_duplex_type.value == 1 /* TDD */) {
     EQ_TLV(unpacked_req->tdd_table.tdd_period, req->tdd_table.tdd_period);
@@ -776,6 +777,7 @@ void copy_config_request(const nfapi_nr_config_request_scf_t *src, nfapi_nr_conf
   }
 
   COPY_TLV(dst->ssb_table.case_v3, src->ssb_table.case_v3);
+  COPY_TLV(dst->prach_config.early_margin_ns_ve, src->prach_config.early_margin_ns_ve);
 
   if (src->cell_config.frame_duplex_type.value == 1 /* TDD */) {
     COPY_TLV(dst->tdd_table.tdd_period, src->tdd_table.tdd_period);
@@ -1194,6 +1196,9 @@ void dump_config_request(const nfapi_nr_config_request_scf_t *msg)
   depth--;
   INDENTED_TLV_PRINT("SSB Per RACH", prach_config->ssb_per_rach);
   INDENTED_TLV_PRINT("PRACH Multiple Carriers in a Band", prach_config->prach_multiple_carriers_in_a_band);
+  if (prach_config->early_margin_ns_ve.tl.tag == NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG) {
+    INDENTED_TLV_FORMAT_PRINT("PRACH Early Margin VE (ns)", "%d", prach_config->early_margin_ns_ve);
+  }
   /* SSB Table */
   const nfapi_nr_ssb_table_t *ssb_table = &msg->ssb_table;
   INDENTED_TLV_PRINT("SSB Offset PointA", ssb_table->ssb_offset_point_a);

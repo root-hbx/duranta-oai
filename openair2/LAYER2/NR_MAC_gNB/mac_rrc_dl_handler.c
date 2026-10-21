@@ -720,6 +720,11 @@ void ue_context_setup_request(const f1ap_ue_context_setup_req_t *req)
    * sent an unknown gNB_DU_ue_id: check here, before any dereference below */
   AssertFatal(UE, "no UE found or could not be created, but UE Context Setup Failed not implemented\n");
   resp.gNB_DU_ue_id = UE->rnti;
+  if (!ue_id_provided && req->cho_time_window) {
+    NR_ServingCellConfigCommon_t *ho_scc = UE->CellGroup->spCellConfig->reconfigurationWithSync->spCellConfigCommon;
+    if (ho_scc->ext2 && ho_scc->ext2->ntn_Config_r17 && UE->ra)
+      UE->ra->cho_ta_err_ns = nr_mac_ntn_config_for_cho_window(ho_scc->ext2->ntn_Config_r17, req->cho_time_window);
+  }
   if (!ue_id_provided) {
     /* new UE: report the C-RNTI we allocated back to the CU */
     resp.crnti = malloc_or_fail(sizeof(*resp.crnti));
@@ -863,8 +868,7 @@ void ue_context_modification_request(const f1ap_ue_context_mod_req_t *req)
   } else if (req->reconfig_compl) {
     LOG_I(NR_MAC, "DU received confirmation of successful RRC Reconfiguration\n");
     if (UE->reconfigCellGroup) {
-      /** During handover, target DU never sends RRC Reconfiguration (source DU does),
-       * so ack_reconfig is never called on target DU - this warning is expected.
+      /** On a handover target DU, CFRA already applied reconfigCellGroup (nr_rx_ra_sdu()).
        * If RRC Reconfiguration was sent via PDSCH, ack_reconfig should have been called when UE ACKed it.
        * If not, this warning would indicate a bug. */
       LOG_W(NR_MAC, "reconfigCellGroup still present, did we miss ACK for RRCReconfiguration?\n");

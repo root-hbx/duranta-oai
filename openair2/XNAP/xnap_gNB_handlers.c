@@ -213,50 +213,140 @@ static int xnap_gNB_handle_xn_setup_failure(instance_t instance,
   return 0;
 }
 
+/* UE-associated XnAP messages are forwarded to RRC with the peer's assoc_id.
+ * On a decoding failure, the message is dropped. */
+#define XNAP_FORWARD_TO_RRC(MSG_ID, decode)                                                                    \
+  do {                                                                                                         \
+    UNUSED(stream);                                                                                            \
+    UNUSED(inst);                                                                                              \
+    MessageDef *msg = itti_alloc_new_message(TASK_XNAP, instance, MSG_ID);                                     \
+    MSG_ID(msg).assoc_id = assoc_id;                                                                           \
+    if (!decode(&MSG_ID(msg).msg, pdu)) {                                                                      \
+      LOG_E(XNAP, "[gNB %ld] Failed to decode " #MSG_ID " from gNB_id 0x%x\n", instance, peer->remote_gnb_id); \
+      itti_free(TASK_XNAP, msg);                                                                               \
+      return -1;                                                                                               \
+    }                                                                                                          \
+    LOG_I(XNAP, "[gNB %ld] Received " #MSG_ID " from gNB_id 0x%x\n", instance, peer->remote_gnb_id);           \
+    itti_send_msg_to_task(TASK_RRC_GNB, instance, msg);                                                        \
+    return 0;                                                                                                  \
+  } while (0)
+
+static int xnap_gNB_handle_handover_request(instance_t instance,
+                                            sctp_assoc_t assoc_id,
+                                            uint32_t stream,
+                                            xnap_gnb_inst_t *inst,
+                                            xnap_peer_t *peer,
+                                            XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_REQ, decode_xnap_handover_request);
+}
+
+static int xnap_gNB_handle_handover_request_ack(instance_t instance,
+                                                sctp_assoc_t assoc_id,
+                                                uint32_t stream,
+                                                xnap_gnb_inst_t *inst,
+                                                xnap_peer_t *peer,
+                                                XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_REQ_ACK, decode_xnap_handover_request_acknowledge);
+}
+
+static int xnap_gNB_handle_handover_preparation_failure(instance_t instance,
+                                                        sctp_assoc_t assoc_id,
+                                                        uint32_t stream,
+                                                        xnap_gnb_inst_t *inst,
+                                                        xnap_peer_t *peer,
+                                                        XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_PREP_FAILURE, decode_xnap_handover_preparation_failure);
+}
+
+static int xnap_gNB_handle_sn_status_transfer(instance_t instance,
+                                              sctp_assoc_t assoc_id,
+                                              uint32_t stream,
+                                              xnap_gnb_inst_t *inst,
+                                              xnap_peer_t *peer,
+                                              XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_SN_STATUS_TRANSFER, decode_xnap_sn_status_transfer);
+}
+
+static int xnap_gNB_handle_ue_context_release(instance_t instance,
+                                              sctp_assoc_t assoc_id,
+                                              uint32_t stream,
+                                              xnap_gnb_inst_t *inst,
+                                              xnap_peer_t *peer,
+                                              XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_UE_CONTEXT_RELEASE, decode_xnap_ue_context_release);
+}
+
+static int xnap_gNB_handle_handover_cancel(instance_t instance,
+                                           sctp_assoc_t assoc_id,
+                                           uint32_t stream,
+                                           xnap_gnb_inst_t *inst,
+                                           xnap_peer_t *peer,
+                                           XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_CANCEL, decode_xnap_handover_cancel);
+}
+
+static int xnap_gNB_handle_handover_success(instance_t instance,
+                                            sctp_assoc_t assoc_id,
+                                            uint32_t stream,
+                                            xnap_gnb_inst_t *inst,
+                                            xnap_peer_t *peer,
+                                            XNAP_XnAP_PDU_t *pdu)
+{
+  XNAP_FORWARD_TO_RRC(XNAP_HANDOVER_SUCCESS, decode_xnap_handover_success);
+}
+
 /* Callback table
  * Indexed by [procedureCode][direction-1]
  * where direction is:  0 = initiatingMessage, 1 = successfulOutcome, 2 = unsuccessfulOutcome
  * Procedure codes taken from XNAP_ProcedureCode.h (TS 38.423 v16.2.0)
  */
 static const xnap_message_decoded_callback xnap_messages_callback[][3] = {
-  {0, 0, 0}, /*  0 handoverPreparation */
-  {0, 0, 0}, /*  1 sNStatusTransfer */
-  {0, 0, 0}, /*  2 handoverCancel */
-  {0, 0, 0}, /*  3 retrieveUEContext */
-  {0, 0, 0}, /*  4 rANPaging */
-  {0, 0, 0}, /*  5 xnUAddressIndication */
-  {0, 0, 0}, /*  6 uEContextRelease */
-  {0, 0, 0}, /*  7 sNGRANnodeAdditionPreparation */
-  {0, 0, 0}, /*  8 sNGRANnodeReconfigurationCompletion */
-  {0, 0, 0}, /*  9 mNGRANnodeinitiatedSNGRANnodeModificationPrep */
-  {0, 0, 0}, /* 10 sNGRANnodeinitiatedSNGRANnodeModificationPrep */
-  {0, 0, 0}, /* 11 mNGRANnodeinitiatedSNGRANnodeRelease */
-  {0, 0, 0}, /* 12 sNGRANnodeinitiatedSNGRANnodeRelease */
-  {0, 0, 0}, /* 13 sNGRANnodeCounterCheck */
-  {0, 0, 0}, /* 14 sNGRANnodeChange */
-  {0, 0, 0}, /* 15 rRCTransfer */
-  {0, 0, 0}, /* 16 xnRemoval */
-  {xnap_gNB_handle_xn_setup_request, xnap_gNB_handle_xn_setup_response, xnap_gNB_handle_xn_setup_failure}, /* 17 xnSetup */
-  {0, 0, 0}, /* 18 nGRANnodeConfigurationUpdate */
-  {0, 0, 0}, /* 19 cellActivation */
-  {0, 0, 0}, /* 20 reset */
-  {0, 0, 0}, /* 21 errorIndication */
-  {0, 0, 0}, /* 22 privateMessage */
-  {0, 0, 0}, /* 23 notificationControl */
-  {0, 0, 0}, /* 24 activityNotification */
-  {0, 0, 0}, /* 25 e_UTRA_NR_CellResourceCoordination */
-  {0, 0, 0}, /* 26 secondaryRATDataUsageReport */
-  {0, 0, 0}, /* 27 deactivateTrace */
-  {0, 0, 0}, /* 28 traceStart */
-  {0, 0, 0}, /* 29 handoverSuccess */
-  {0, 0, 0}, /* 30 conditionalHandoverCancel */
-  {0, 0, 0}, /* 31 earlyStatusTransfer */
-  {0, 0, 0}, /* 32 failureIndication */
-  {0, 0, 0}, /* 33 handoverReport */
-  {0, 0, 0}, /* 34 resourceStatusReportingInitiation */
-  {0, 0, 0}, /* 35 resourceStatusReporting */
-  {0, 0, 0}, /* 36 mobilitySettingsChange */
-  {0, 0, 0}, /* 37 accessAndMobilityIndication */
+    {xnap_gNB_handle_handover_request,
+     xnap_gNB_handle_handover_request_ack,
+     xnap_gNB_handle_handover_preparation_failure}, /*  0 handoverPreparation */
+    {xnap_gNB_handle_sn_status_transfer, 0, 0}, /*  1 sNStatusTransfer */
+    {xnap_gNB_handle_handover_cancel, 0, 0}, /*  2 handoverCancel */
+    {0, 0, 0}, /*  3 retrieveUEContext */
+    {0, 0, 0}, /*  4 rANPaging */
+    {0, 0, 0}, /*  5 xnUAddressIndication */
+    {xnap_gNB_handle_ue_context_release, 0, 0}, /*  6 uEContextRelease */
+    {0, 0, 0}, /*  7 sNGRANnodeAdditionPreparation */
+    {0, 0, 0}, /*  8 sNGRANnodeReconfigurationCompletion */
+    {0, 0, 0}, /*  9 mNGRANnodeinitiatedSNGRANnodeModificationPrep */
+    {0, 0, 0}, /* 10 sNGRANnodeinitiatedSNGRANnodeModificationPrep */
+    {0, 0, 0}, /* 11 mNGRANnodeinitiatedSNGRANnodeRelease */
+    {0, 0, 0}, /* 12 sNGRANnodeinitiatedSNGRANnodeRelease */
+    {0, 0, 0}, /* 13 sNGRANnodeCounterCheck */
+    {0, 0, 0}, /* 14 sNGRANnodeChange */
+    {0, 0, 0}, /* 15 rRCTransfer */
+    {0, 0, 0}, /* 16 xnRemoval */
+    {xnap_gNB_handle_xn_setup_request, xnap_gNB_handle_xn_setup_response, xnap_gNB_handle_xn_setup_failure}, /* 17 xnSetup */
+    {0, 0, 0}, /* 18 nGRANnodeConfigurationUpdate */
+    {0, 0, 0}, /* 19 cellActivation */
+    {0, 0, 0}, /* 20 reset */
+    {0, 0, 0}, /* 21 errorIndication */
+    {0, 0, 0}, /* 22 privateMessage */
+    {0, 0, 0}, /* 23 notificationControl */
+    {0, 0, 0}, /* 24 activityNotification */
+    {0, 0, 0}, /* 25 e_UTRA_NR_CellResourceCoordination */
+    {0, 0, 0}, /* 26 secondaryRATDataUsageReport */
+    {0, 0, 0}, /* 27 deactivateTrace */
+    {0, 0, 0}, /* 28 traceStart */
+    {xnap_gNB_handle_handover_success, 0, 0}, /* 29 handoverSuccess */
+    {0, 0, 0}, /* 30 conditionalHandoverCancel */
+    {0, 0, 0}, /* 31 earlyStatusTransfer */
+    {0, 0, 0}, /* 32 failureIndication */
+    {0, 0, 0}, /* 33 handoverReport */
+    {0, 0, 0}, /* 34 resourceStatusReportingInitiation */
+    {0, 0, 0}, /* 35 resourceStatusReporting */
+    {0, 0, 0}, /* 36 mobilitySettingsChange */
+    {0, 0, 0}, /* 37 accessAndMobilityIndication */
 };
 
 static const char *xnap_direction2str(int dir)

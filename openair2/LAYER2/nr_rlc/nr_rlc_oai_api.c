@@ -772,6 +772,32 @@ void nr_rlc_add_srb(int ue_id, int srb_id, const NR_RLC_BearerConfig_t *rlc_Bear
   nr_rlc_manager_unlock(nr_rlc_ue_manager);
 }
 
+/* PDCP discardTimer of the DRBs created from now on, unit ms, 0 for infinity */
+static int drb_discard_timer = 0;
+
+void nr_rlc_set_drb_discard_timer(int discard_timer)
+{
+  if (discard_timer > 0)
+    drb_discard_timer = discard_timer;
+  else
+    drb_discard_timer = 0;
+}
+
+void nr_rlc_update_drb_discard_timer(int ue_id, int drb_id, int discard_timer)
+{
+  AssertFatal(drb_id > 0 && drb_id <= MAX_DRBS_PER_UE, "Invalid DRB ID %d\n", drb_id);
+  nr_rlc_manager_lock(nr_rlc_ue_manager);
+  nr_rlc_ue_t *ue = nr_rlc_manager_get_ue(nr_rlc_ue_manager, ue_id);
+  nr_rlc_entity_t *rb = ue->drb[drb_id - 1];
+  if (rb != NULL) {
+    if (discard_timer > 0)
+      rb->discard_timer = discard_timer;
+    else
+      rb->discard_timer = 0;
+  }
+  nr_rlc_manager_unlock(nr_rlc_ue_manager);
+}
+
 static void add_drb_am(int ue_id, int drb_id, const NR_RLC_BearerConfig_t *rlc_BearerConfig)
 {
   struct NR_RLC_Config *r = rlc_BearerConfig->rlc_Config;
@@ -830,6 +856,7 @@ static void add_drb_am(int ue_id, int drb_id, const NR_RLC_BearerConfig_t *rlc_B
                                                       t_reassembly, t_status_prohibit,
                                                       poll_pdu, poll_byte, max_retx_threshold,
                                                       sn_field_length);
+    nr_rlc_am->discard_timer = drb_discard_timer;
     nr_rlc_ue_add_drb_rlc_entity(ue, drb_id, nr_rlc_am);
 
     LOG_I(RLC, "Added drb %d to UE %d\n", drb_id, ue_id);
@@ -881,6 +908,7 @@ static void add_drb_um(int ue_id, int drb_id, const NR_RLC_BearerConfig_t *rlc_B
                                                       deliver_sdu, ue,
                                                       t_reassembly,
                                                       sn_field_length);
+    nr_rlc_um->discard_timer = drb_discard_timer;
     nr_rlc_ue_add_drb_rlc_entity(ue, drb_id, nr_rlc_um);
 
     LOG_D(RLC, "Added drb %d to UE %d\n", drb_id, ue_id);

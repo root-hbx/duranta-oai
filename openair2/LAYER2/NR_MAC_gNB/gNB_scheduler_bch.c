@@ -720,6 +720,9 @@ void schedule_nr_other_sib(nr_cell_sched_t *cell,
   }
 
   for (int ssb = 0; ssb < num_ssb; ssb++) {
+    // the otherSI PDCCH is placed with the type0 CSS config, which is only set once this SSB has been transmitted
+    if (cell->type0_PDCCH_CSS_config[cc->ssb_index[ssb]].num_rbs == 0)
+      continue;
     for (int i = 0; i < schedInfo->schedulingInfoList.list.count; i++) {
       NR_SchedulingInfo_t *schedulingInfo = schedInfo->schedulingInfoList.list.array[i];
       if (test_other_sib_sched_occasion(i + 1,

@@ -1157,6 +1157,7 @@ set(L2_NR_SRC
   ${NR_RRC_DIR}/rrc_gNB_cuup.c
   ${NR_RRC_DIR}/rrc_gNB_du.c
   ${NR_RRC_DIR}/rrc_gNB_mobility.c
+  ${NR_RRC_DIR}/rrc_gNB_XNAP.c
   ${NR_RRC_DIR}/rrc_gNB_NRPPA.c
   ${NR_RRC_DIR}/rrc_gNB_nrdc.c
   )
@@ -1187,6 +1188,8 @@ set(NR_L2_SRC_UE
   ${NR_UE_RRC_DIR}/L2_interface_ue.c
   ${NR_UE_RRC_DIR}/main_ue.c
   ${NR_UE_RRC_DIR}/rrc_UE.c
+  ${NR_UE_RRC_DIR}/nr_ue_gnss.c
+  ${NR_UE_RRC_DIR}/rrc_UE_cho.c
   ${NR_UE_RRC_DIR}/verify_RRC.c
   ${NR_UE_RRC_DIR}/rrc_timers_and_constants.c
   ${NR_UE_RRC_DIR}/rrc_sl_preconfig.c

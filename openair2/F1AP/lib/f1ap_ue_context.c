@@ -1371,6 +1371,8 @@ f1ap_ue_context_setup_req_t cp_ue_context_setup_req(const f1ap_ue_context_setup_
   CP_OPT_BYTE_ARRAY(cp.rrc_container, orig->rrc_container);
   if (orig->gnb_du_ue_agg_mbr_ul)
     _F1_MALLOC(cp.gnb_du_ue_agg_mbr_ul, *orig->gnb_du_ue_agg_mbr_ul);
+  if (orig->cho_time_window)
+    _F1_MALLOC(cp.cho_time_window, *orig->cho_time_window);
   return cp;
 }
 
@@ -1417,6 +1419,7 @@ void free_ue_context_setup_req(f1ap_ue_context_setup_req_t *req)
   free(req->drbs);
   FREE_OPT_BYTE_ARRAY(req->rrc_container);
   free(req->gnb_du_ue_agg_mbr_ul);
+  free(req->cho_time_window);
 }
 
 /**

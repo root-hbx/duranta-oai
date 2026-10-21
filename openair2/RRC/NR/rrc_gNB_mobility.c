@@ -94,9 +94,15 @@ nr_handover_context_t *alloc_ho_ctx(ho_ctx_type_t type)
 
 static void free_ho_ctx(nr_handover_context_t *ho_ctx)
 {
+  if (ho_ctx->source) {
+    for (int i = 0; i < ho_ctx->source->num_cho; i++)
+      free_byte_array(ho_ctx->source->cho_cand[i].rrc_reconfig);
+  }
   free(ho_ctx->source);
-  if (ho_ctx->target)
+  if (ho_ctx->target) {
     FREE_AND_ZERO_BYTE_ARRAY(ho_ctx->target->ue_ho_prep_info);
+    free(ho_ctx->target->cho_window);
+  }
   free(ho_ctx->target);
   free(ho_ctx);
 }
@@ -134,14 +140,14 @@ void nr_rrc_apply_target_context(gNB_RRC_UE_t *UE)
  * \param target_du the DU towards which to handover. Note: currently, the CU
  * is limited to one cell per DU, so DU and cell are equivalent here.
  * \param ho_ctxt contextual data for the type of handover (F1, N2, Xn) */
-static void nr_initiate_handover(const gNB_RRC_INST *rrc,
-                                 gNB_RRC_UE_t *ue,
-                                 const nr_rrc_cell_container_t *source_cell,
-                                 byte_array_t *ho_prep_info,
-                                 ho_req_ack_t ack,
-                                 ho_success_t success,
-                                 ho_cancel_t cancel,
-                                 ho_failure_t failure)
+void nr_initiate_handover(const gNB_RRC_INST *rrc,
+                          gNB_RRC_UE_t *ue,
+                          const nr_rrc_cell_container_t *source_cell,
+                          byte_array_t *ho_prep_info,
+                          ho_req_ack_t ack,
+                          ho_success_t success,
+                          ho_cancel_t cancel,
+                          ho_failure_t failure)
 {
   DevAssert(rrc != NULL);
   DevAssert(ue != NULL);
@@ -407,7 +413,7 @@ void nr_HO_F1_trigger_telnet(gNB_RRC_INST *rrc, uint32_t rrc_ue_id)
 /** @brief Generate the HandoverPreparationInformation to be carried
  * in the RRC Container (9.3.1.29 of 3GPP TS 38.413) of the Source
  * NG-RAN Node to Target NG-RAN Node Transparent Container IE */
-static byte_array_t rrc_gNB_generate_HandoverPreparationInformation(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue)
+byte_array_t rrc_gNB_generate_HandoverPreparationInformation(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue)
 {
   nr_rrc_reconfig_param_t params = get_RRCReconfiguration_params(rrc, ue, 0, false);
   params.ue_cap = ue->ue_cap_buffer;
@@ -519,38 +525,43 @@ bool nr_rrc_update_cell_assoc_after_ho(gNB_RRC_UE_t *UE)
   return true;
 }
 
-/** @brief This callback is used by the target gNB
- *         to trigger the Handover Request Acknowledge towards the AMF */
-static void nr_rrc_n2_ho_acknowledge(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
+/** @brief Target gNB (N2 or Xn), once the target DU has accepted the UE: take the target
+ * DU context into use and encode the Handover Command. Returns an empty buffer on failure. */
+byte_array_t nr_rrc_ho_target_prepare(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
 {
   AssertFatal(cu_exists_f1_ue_data(UE->rrc_ue_id), "No CU found for rrc_ue_id %d\n", UE->rrc_ue_id);
 
   f1_ue_data_t previous_data = cu_get_f1_ue_data(UE->rrc_ue_id);
-  /* this is the callback for N2 handover after F1 UE context setup response in
+  /* this is the callback for N2/Xn handover after F1 UE context setup response in
    * the handover case. Check that there was no associated DU, then set it */
   AssertFatal(previous_data.secondary_ue == -1, "there was already a DU present\n");
   nr_rrc_apply_target_context(UE);
 
   /* Update cell association after handover */
-  nr_ho_target_cu_t *target = UE->ho_context->target;
-  if (!nr_rrc_update_cell_assoc_after_ho(UE)) {
-    ngap_handover_failure_t fail = {.amf_ue_ngap_id = UE->amf_ue_ngap_id,
-                                    .cause.type = NGAP_CAUSE_RADIO_NETWORK,
-                                    .cause.value = NGAP_CAUSE_RADIO_NETWORK_HO_FAILURE_IN_TARGET_5GC_NGRAN_NODE_OR_TARGET_SYSTEM};
-    target->ho_failure(rrc, UE->rrc_ue_id, &fail);
-    return;
-  }
+  if (!nr_rrc_update_cell_assoc_after_ho(UE))
+    return (byte_array_t){0};
 
   byte_array_t hoCommand = rrc_gNB_encode_HandoverCommand(UE, rrc);
-  if (hoCommand.len < 0) {
+  if (!hoCommand.buf || (ssize_t)hoCommand.len <= 0) {
     LOG_E(NR_RRC, "ASN1 message encoding failed: failed to generate Handover Command Message\n");
+    free(hoCommand.buf);
+    return (byte_array_t){0};
+  }
+  LOG_D(NR_RRC, "HO LOG: Handover Command for UE %u Encoded (%ld bytes)\n", UE->rrc_ue_id, hoCommand.len);
+  return hoCommand;
+}
+
+/** @brief This callback is used by the target gNB
+ *         to trigger the Handover Request Acknowledge towards the AMF */
+static void nr_rrc_n2_ho_acknowledge(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
+{
+  byte_array_t hoCommand = nr_rrc_ho_target_prepare(rrc, UE);
+  if (hoCommand.len == 0) {
     ngap_handover_failure_t fail = {.amf_ue_ngap_id = UE->amf_ue_ngap_id,
                                     .cause.type = NGAP_CAUSE_RADIO_NETWORK,
                                     .cause.value = NGAP_CAUSE_RADIO_NETWORK_HO_FAILURE_IN_TARGET_5GC_NGRAN_NODE_OR_TARGET_SYSTEM};
-    target->ho_failure(rrc, UE->rrc_ue_id, &fail);
+    UE->ho_context->target->ho_failure(rrc, UE->rrc_ue_id, &fail);
     return;
-  } else {
-    LOG_D(NR_RRC, "HO LOG: Handover Command for UE %u Encoded (%ld bytes)\n", UE->rrc_ue_id, hoCommand.len);
   }
 
   rrc_gNB_send_NGAP_HANDOVER_REQUEST_ACKNOWLEDGE(rrc, UE, hoCommand);

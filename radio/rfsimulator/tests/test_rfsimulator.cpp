@@ -42,6 +42,10 @@ bool nr_update_sib19(const gnb_sat_position_update_t *sat_position)
   sib19_update_count++;
   return true;
 }
+void nr_register_ntn_ta_predictor(nr_ntn_ta_predictor_t predictor)
+{
+  (void)predictor;
+}
 void update_channel_model(channel_desc_t *channelDesc, int nbSamples, uint64_t TS);
 }
 
@@ -712,6 +716,17 @@ TEST_F(SatTraceTest, ZeroOrderHold)
   EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(2), cd->pos_ue) / kC * kSampleRate));
 }
 
+TEST_F(SatTraceTest, CommonClockIgnoresLinkStart)
+{
+  channel_desc_t *cd = MakeDesc(SAT_LEO_REGEN, false);
+  cd->start_TS = 5 * kSampleRate; // link connected at rfsim time 5 s
+  update_channel_model(cd, 64, 7.5 * kSampleRate);
+  EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(2.5), cd->pos_ue) / kC * kSampleRate)) << "time since link up";
+  cd->sat_trace_common_clock = true;
+  update_channel_model(cd, 64, 7.5 * kSampleRate);
+  EXPECT_EQ(cd->channel_offset, (uint64_t)(Dist(SatPos(7.5), cd->pos_ue) / kC * kSampleRate)) << "rfsim time";
+}
+
 TEST_F(SatTraceTest, ClampedAfterTraceEnd)
 {
   channel_desc_t *cd = MakeDesc(SAT_LEO_REGEN, false);
@@ -735,8 +750,10 @@ TEST_F(SatTraceTest, TransparentUplinkAndSib19)
 
   ASSERT_EQ(sib19_update_count, count + 1);
   EXPECT_EQ(last_sib19_update.sfn, (int)(t * 100 + 1) % 1024);
-  EXPECT_NEAR(last_sib19_update.delay, 2 * dist_feeder / (kC * 4.072e-9), 1);
-  EXPECT_NEAR(last_sib19_update.position.X, SatPos(t)[0] / 1.3, 1);
+  // the values are at the epoch, the start of the next frame
+  const double t_epoch = t + 0.01;
+  EXPECT_NEAR(last_sib19_update.delay, 2 * Dist(SatPos(t_epoch), cd->pos_gnb) / (kC * 4.072e-9), 1);
+  EXPECT_NEAR(last_sib19_update.position.X, SatPos(t_epoch)[0] / 1.3, 1);
   EXPECT_NEAR(last_sib19_update.position.Z, kOrbitZ / 1.3, 1);
   EXPECT_NEAR(last_sib19_update.velocity.X, kSatVel / 0.06, 1);
   // drift fitted over [t, t + 10 s] is close to the feeder link range rate at t + 2.5 s or so: just check the sign

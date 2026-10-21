@@ -943,6 +943,13 @@ bool nr_pdcp_data_req_drb(protocol_ctxt_t *ctxt_pP,
     return 0;
   }
 
+  if (rb->tx_frozen) {
+    // handover source after the status transfer: the target sends this SDU's COUNT, drop it
+    nr_pdcp_manager_unlock(nr_pdcp_ue_manager);
+    LOG_D(PDCP, "[UE %lx] DRB %ld frozen for handover, SDU dropped\n", ue_id, rb_id);
+    return 1;
+  }
+
   int max_size = nr_max_pdcp_pdu_size(sdu_buffer_size);
   char pdu_buf[max_size];
   int pdu_size = rb->process_sdu(rb, (char *)sdu_buffer, sdu_buffer_size, muiP, pdu_buf, max_size);
@@ -1046,6 +1053,8 @@ void nr_pdcp_count_update(ue_id_t ue_id,
 }
 
 /** * @brief Get PDCP COUNT values (PDCP-SN and HFN) for UL and DL from the PDCP entity
+ *        for the handover status transfer, and stop DL transmission so that the target
+ *        continues from the reported DL COUNT (no data forwarding: later DL SDUs are dropped)
  * @param[in]  ue_id          Unique UE ID
  * @param[in]  rb_id          Radio Bearer ID
  * @param[out] ul_count       UL PDCP count (SN, HFN)
@@ -1067,6 +1076,7 @@ void nr_pdcp_get_drb_count_values(ue_id_t ue_id, rb_id_t rb_id, nr_pdcp_count_t 
 
   *dl_count = entity->get_pdcp_count_dl(entity);
   *ul_count = entity->get_pdcp_count_ul(entity);
+  entity->tx_frozen = true;
 
   nr_pdcp_manager_unlock(nr_pdcp_ue_manager);
 }

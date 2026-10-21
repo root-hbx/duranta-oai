@@ -58,6 +58,7 @@
 #include "positioning_nr_paramdef.h"
 #include "f1ap_cu_task.h"
 #include "openair3/NRPPA/nrppa_gNB_config.h"
+#include "LAYER2/nr_rlc/nr_rlc_oai_api.h"
 
 static int DEFBANDS[] = {7};
 static int DEFENBS[] = {0};
@@ -2264,6 +2265,25 @@ static void fill_neighbour_cell_configuration(const uint8_t gnb_idx, gNB_RRC_INS
   sort_neighbour_configuration(rrc);
 }
 
+static void fill_cho_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
+{
+  char path[MAX_OPTNAME_SIZE + 8];
+  snprintf(path, sizeof(path), "%s.[%i].%s", GNB_CONFIG_STRING_GNB_LIST, gnb_idx, GNB_CONFIG_STRING_CHO_CONFIGURATION);
+  GET_PARAMS(cho_params, CHO_PARAMS_DESC, path);
+  nr_cho_configuration_t *cho = &rrc->cho_configuration;
+  cho->t1_threshold = *cho_params[CHO_T1_THRESHOLD_IDX].u64ptr;
+  cho->t1_duration = *cho_params[CHO_T1_DURATION_IDX].i64ptr;
+  cho->a3_offset = *cho_params[CHO_A3_OFFSET_IDX].i64ptr;
+  cho->a3_hysteresis = *cho_params[CHO_A3_HYSTERESIS_IDX].i64ptr;
+  cho->a3_time_to_trigger = *cho_params[CHO_A3_TTT_IDX].i64ptr;
+  cho->attempt_cond_reconfig = *cho_params[CHO_ATTEMPT_IDX].i64ptr != 0;
+  AssertFatal(cho->a3_offset >= -30 && cho->a3_offset <= 30, "CHO a3_offset %ld out of -30..30\n", cho->a3_offset);
+  AssertFatal(cho->a3_hysteresis >= 0 && cho->a3_hysteresis <= 30, "CHO a3_hysteresis %ld out of 0..30\n", cho->a3_hysteresis);
+  AssertFatal(cho->a3_time_to_trigger >= 0 && cho->a3_time_to_trigger <= 15,
+              "CHO a3_time_to_trigger %ld out of 0..15\n",
+              cho->a3_time_to_trigger);
+}
+
 static void fill_measurement_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
 {
   char measurement_path[MAX_OPTNAME_SIZE + 8];
@@ -2456,6 +2476,7 @@ gNB_RRC_INST *RCconfig_NRRRC()
         fill_neighbour_cell_configuration(k, rrc);
 
         fill_measurement_configuration(k, rrc);
+        fill_cho_configuration(k, rrc);
 
         rrc->SIBs = fill_cu_sibs(GNBParamList.paramarray[i]);
 
@@ -2488,6 +2509,8 @@ gNB_RRC_INST *RCconfig_NRRRC()
 
   config_rlc(config_get_if(), &rrc->rlc_config);
   config_pdcp(config_get_if(), &rrc->pdcp_config);
+  // the gNB applies its DRB discardTimer to DL like the UE to UL
+  nr_rlc_set_drb_discard_timer(rrc->pdcp_config.drb.discard_timer);
 
   config_nrdc(config_get_if(), &rrc->nrdc_config);
 

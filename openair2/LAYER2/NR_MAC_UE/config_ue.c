@@ -358,6 +358,8 @@ static void configure_ntn_ta(fapi_nr_ntn_config_t *ntn_ta,
     ntn_ta->epoch_hfn = hfn + 1;
   ntn_ta->epoch_sfn = epoch_time_r17->sfn_r17;
   ntn_ta->epoch_subframe = epoch_time_r17->subFrameNR_r17;
+  ntn_ta->epoch_ref_hfn = hfn;
+  ntn_ta->epoch_ref_frame = frame;
 
   // handle cellSpecificKoffset_r17
   if (ntn_Config_r17->cellSpecificKoffset_r17)
@@ -2051,10 +2053,15 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
       mac->state = UE_PERFORMING_RA;
       break;
     case NR_MAC_RA_START_REESTABLISHMENT: {
-      fapi_nr_synch_request_t sync_req = {.target_Nid_cell = mac->physCellId, .ssb_bw_scan = false};
+      // the cell selection follows (nr_rrc_mac_cell_search)
+      // also releases the dedicated preambles of a failed reconfiguration with sync (5.3.5.8.3)
+      reset_ra(mac, false);
       reset_mac_inst(mac);
+      // Msg3 is the RRCReestablishmentRequest on CCCH, not the C-RNTI of an RA that failed before
+      mac->msg3_C_RNTI = false;
       nr_ue_mac_default_configs(mac);
-      nr_ue_reset_sync_state(mac, true);
+      // as in initial access, the RA starts with the SI of the selected cell (RRC acquires it after the MIB)
+      nr_ue_reset_sync_state(mac, false);
       release_mac_configuration(mac, RE_ESTABLISHMENT);
       for (int j = 0; j < mac->lc_ordered_list.count; j++) {
         nr_lcordered_info_t *lc = mac->lc_ordered_list.array[j];
@@ -2063,12 +2070,38 @@ static void nr_mac_start_ra(NR_UE_MAC_INST_t *mac, module_id_t module_id, nr_mac
         lc->rb_suspended = true;
       }
       configure_timeAlignmentTimer(&mac->time_alignment_timer, mac->timeAlignmentTimerCommon, mac->current_UL_BWP->scs);
-      nr_ue_send_synch_request(mac, module_id, 0, &sync_req);
       break;
     }
     default:
       AssertFatal(false, "unknown nr_mac_ra_start_cause_t %d\n", cause);
   }
+}
+
+/** @brief Cell selection of the re-establishment (38.331 5.3.7.2): synchronization to a cell of the carrier,
+ * pci or any (-1), not only the failed one (e.g., the target of a failed handover). With a satellite ntn_config
+ * (e.g., of a conditional handover candidate), the DL Doppler of that satellite is pre-compensated, else the one
+ * of the satellite of the serving cell */
+void nr_rrc_mac_cell_search(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame)
+{
+  NR_UE_MAC_INST_t *mac = get_mac_inst(module_id);
+  int ret = pthread_mutex_lock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
+  fapi_nr_ntn_config_t *ntn = &mac->phy_config.config_req.ntn_config;
+  if (ntn_config) {
+    configure_ntn_ta(ntn, ntn_config, hfn, frame, true);
+  } else if (mac->serving_ntn_config.cell_specific_k_offset) {
+    *ntn = mac->serving_ntn_config;
+    ntn->is_targetcell = true;
+    ntn->params_changed = true;
+  }
+  if (ntn->params_changed) {
+    mac->if_module->phy_config_request(&mac->phy_config);
+    ntn->params_changed = false;
+  }
+  fapi_nr_synch_request_t sync_req = {.target_Nid_cell = pci, .ssb_bw_scan = false};
+  nr_ue_send_synch_request(mac, module_id, 0, &sync_req);
+  ret = pthread_mutex_unlock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
 }
 
 /** @brief All RRC-initiated RA entry points */
@@ -2143,6 +2176,8 @@ void nr_rrc_mac_config_other_sib(module_id_t module_id, NR_SIB19_r17_t *sib19, i
     configure_ntn_ta(&mac->phy_config.config_req.ntn_config, mac->sc_info.ntn_Config_r17, hfn, frame, false);
     mac->if_module->phy_config_request(&mac->phy_config);
     mac->phy_config.config_req.ntn_config.params_changed = false;
+    if (mac->state == UE_CONNECTED)
+      mac->serving_ntn_config = mac->phy_config.config_req.ntn_config;
   }
   if (mac->state == UE_RECEIVING_SIB && can_start_ra)
     mac->state = UE_PERFORMING_RA;
@@ -3020,6 +3055,8 @@ void nr_rrc_mac_config_req_meas(module_id_t module_id, const nr_neighbor_cell_in
 
   for (int i = 0; i < num_neighbors && i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
     fapi_nr_neighboring_cell_t *phy_cell = &mac->phy_config.config_req.meas_config.nr_neighboring_cell[i];
+    if (phy_cell->Nid_cell != neighbor_cells[i].Nid_cell)
+      phy_cell->has_ntn_config = false;
     phy_cell->Nid_cell = neighbor_cells[i].Nid_cell;
     phy_cell->Nid_cell_was_configured = phy_cell->Nid_cell == (uint16_t)-1 ? false : true;
     phy_cell->ssb_freq = neighbor_cells[i].ssb_freq;
@@ -3027,4 +3064,24 @@ void nr_rrc_mac_config_req_meas(module_id_t module_id, const nr_neighbor_cell_in
   }
 
   mac->if_module->phy_config_request(&mac->phy_config);
+}
+
+void nr_rrc_mac_config_req_neighbour_ntn(module_id_t module_id, int pci, const NR_NTN_Config_r17_t *ntn_config, int hfn, int frame)
+{
+  NR_UE_MAC_INST_t *mac = get_mac_inst(module_id);
+  int ret = pthread_mutex_lock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
+  for (int i = 0; i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
+    fapi_nr_neighboring_cell_t *phy_cell = &mac->phy_config.config_req.meas_config.nr_neighboring_cell[i];
+    if (!phy_cell->active || phy_cell->Nid_cell != pci)
+      continue;
+    phy_cell->has_ntn_config = ntn_config != NULL;
+    if (ntn_config)
+      configure_ntn_ta(&phy_cell->ntn_config, ntn_config, hfn, frame, true);
+    LOG_I(NR_MAC, "neighbour cell PCI %d: %s ntn-Config for measurements\n", pci, ntn_config ? "own" : "no");
+    mac->if_module->phy_config_request(&mac->phy_config);
+    break;
+  }
+  ret = pthread_mutex_unlock(&mac->if_mutex);
+  AssertFatal(!ret, "mutex failed %d\n", ret);
 }

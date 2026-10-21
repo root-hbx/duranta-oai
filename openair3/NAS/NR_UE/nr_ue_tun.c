@@ -15,11 +15,11 @@ void nr_ue_tun_store_qfi(nas_ue_pdu_tun_t *t, uint8_t qfi)
 void nr_ue_tun_create_ip_if(nas_ue_pdu_tun_t *t, const char *ipv4, const char *ipv6, int ue_id, int pdu_session_id)
 {
   DevAssert(t != NULL);
-  if (t->sock >= 0)
-    return;
-
-  tuntap_generate_ue_ifname(t->ifname, IFF_TUN, ue_id, pdu_session_id);
-  t->sock = tuntap_alloc(IFF_TUN, t->ifname);
+  // a PDU session established again (e.g., after an RRC connection failure) may come with another address
+  if (t->sock < 0) {
+    tuntap_generate_ue_ifname(t->ifname, IFF_TUN, ue_id, pdu_session_id);
+    t->sock = tuntap_alloc(IFF_TUN, t->ifname);
+  }
   tun_config(t->ifname, ipv4, ipv6);
   if (ipv4)
     setup_ue_ipv4_route(t->ifname, ue_id, pdu_session_id, ipv4);

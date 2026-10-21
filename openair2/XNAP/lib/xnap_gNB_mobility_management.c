@@ -349,6 +349,33 @@ XNAP_XnAP_PDU_t *encode_xnap_handover_request(const xnap_handover_req_t *req)
                                                     req->ue_context.num_pdu,
                                                     &ctx->pduSessionResourcesToBeSetup_List);
 
+  /* Conditional Handover Information Request (O) */
+  if (req->cho_info) {
+    asn1cSequenceAdd(out->protocolIEs.list, XNAP_HandoverRequest_IEs_t, ie7);
+    ie7->id = XNAP_ProtocolIE_ID_id_CHOinformation_Req;
+    ie7->criticality = XNAP_Criticality_reject;
+    ie7->value.present = XNAP_HandoverRequest_IEs__value_PR_CHOinformation_Req;
+    XNAP_CHOinformation_Req_t *cho = &ie7->value.choice.CHOinformation_Req;
+    cho->cho_trigger = req->cho_info->trigger == XNAP_CHO_REPLACE ? XNAP_CHOtrigger_cho_replace : XNAP_CHOtrigger_cho_initiation;
+    if (req->cho_info->t_ng_node_ue_xnap_id) {
+      asn1cCallocOne(cho->targetNG_RANnodeUEXnAPID, *req->cho_info->t_ng_node_ue_xnap_id);
+    }
+    if (req->cho_info->estimated_arrival_probability) {
+      asn1cCallocOne(cho->cHO_EstimatedArrivalProbability, *req->cho_info->estimated_arrival_probability);
+    }
+    if (req->cho_info->time_based) {
+      XNAP_ProtocolExtensionContainer_8902P69_t *ext = calloc_or_fail(1, sizeof(*ext));
+      asn1cSequenceAdd(ext->list, XNAP_CHOinformation_Req_ExtIEs_t, tb_ie);
+      tb_ie->id = XNAP_ProtocolIE_ID_id_CHOTimeBasedInformation;
+      tb_ie->criticality = XNAP_Criticality_reject;
+      tb_ie->extensionValue.present = XNAP_CHOinformation_Req_ExtIEs__extensionValue_PR_CHOTimeBasedInformation;
+      XNAP_CHOTimeBasedInformation_t *tb = &tb_ie->extensionValue.choice.CHOTimeBasedInformation;
+      asn_uint642INTEGER(&tb->cHO_HOWindowStart, req->cho_info->time_based->start);
+      tb->cHO_HOWindowDuration = req->cho_info->time_based->duration;
+      cho->iE_Extensions = (struct XNAP_ProtocolExtensionContainer *)ext;
+    }
+  }
+
   /* UE History Information (M) */
   asn1cSequenceAdd(out->protocolIEs.list, XNAP_HandoverRequest_IEs_t, ie6);
   ie6->id = XNAP_ProtocolIE_ID_id_UEHistoryInformation;
@@ -455,6 +482,34 @@ bool decode_xnap_handover_request(xnap_handover_req_t *out, const XNAP_XnAP_PDU_
         if (!decode_xnap_ue_history_information(&ie->value.choice.UEHistoryInformation, out))
           return false;
         break;
+
+      case XNAP_ProtocolIE_ID_id_CHOinformation_Req: {
+        _EQ_CHECK_INT(ie->value.present, XNAP_HandoverRequest_IEs__value_PR_CHOinformation_Req);
+        const XNAP_CHOinformation_Req_t *cho = &ie->value.choice.CHOinformation_Req;
+        out->cho_info = calloc_or_fail(1, sizeof(*out->cho_info));
+        out->cho_info->trigger = cho->cho_trigger == XNAP_CHOtrigger_cho_replace ? XNAP_CHO_REPLACE : XNAP_CHO_INITIATION;
+        if (cho->targetNG_RANnodeUEXnAPID) {
+          out->cho_info->t_ng_node_ue_xnap_id = malloc_or_fail(sizeof(*out->cho_info->t_ng_node_ue_xnap_id));
+          *out->cho_info->t_ng_node_ue_xnap_id = *cho->targetNG_RANnodeUEXnAPID;
+        }
+        if (cho->cHO_EstimatedArrivalProbability) {
+          out->cho_info->estimated_arrival_probability = malloc_or_fail(sizeof(*out->cho_info->estimated_arrival_probability));
+          *out->cho_info->estimated_arrival_probability = *cho->cHO_EstimatedArrivalProbability;
+        }
+        const XNAP_ProtocolExtensionContainer_8902P69_t *ext =
+            (const XNAP_ProtocolExtensionContainer_8902P69_t *)cho->iE_Extensions;
+        for (int j = 0; ext && j < ext->list.count; j++) {
+          const XNAP_CHOinformation_Req_ExtIEs_t *e = ext->list.array[j];
+          if (e->id != XNAP_ProtocolIE_ID_id_CHOTimeBasedInformation)
+            continue;
+          _EQ_CHECK_INT(e->extensionValue.present, XNAP_CHOinformation_Req_ExtIEs__extensionValue_PR_CHOTimeBasedInformation);
+          const XNAP_CHOTimeBasedInformation_t *tb = &e->extensionValue.choice.CHOTimeBasedInformation;
+          out->cho_info->time_based = calloc_or_fail(1, sizeof(*out->cho_info->time_based));
+          if (asn_INTEGER2uint64(&tb->cHO_HOWindowStart, &out->cho_info->time_based->start) != 0)
+            return false;
+          out->cho_info->time_based->duration = tb->cHO_HOWindowDuration;
+        }
+      } break;
 
       default:
         AssertError(0, return false, "Unknown XnAP IE id %ld\n", ie->id);
@@ -590,6 +645,22 @@ bool eq_xnap_handover_request(const xnap_handover_req_t *a, const xnap_handover_
       return false;
   }
 
+  _EQ_CHECK_INT(!a->cho_info, !b->cho_info);
+  if (a->cho_info) {
+    _EQ_CHECK_INT(a->cho_info->trigger, b->cho_info->trigger);
+    _EQ_CHECK_INT(!a->cho_info->t_ng_node_ue_xnap_id, !b->cho_info->t_ng_node_ue_xnap_id);
+    if (a->cho_info->t_ng_node_ue_xnap_id)
+      _EQ_CHECK_UINT32(*a->cho_info->t_ng_node_ue_xnap_id, *b->cho_info->t_ng_node_ue_xnap_id);
+    _EQ_CHECK_INT(!a->cho_info->estimated_arrival_probability, !b->cho_info->estimated_arrival_probability);
+    if (a->cho_info->estimated_arrival_probability)
+      _EQ_CHECK_INT(*a->cho_info->estimated_arrival_probability, *b->cho_info->estimated_arrival_probability);
+    _EQ_CHECK_INT(!a->cho_info->time_based, !b->cho_info->time_based);
+    if (a->cho_info->time_based) {
+      _EQ_CHECK_UINT64(a->cho_info->time_based->start, b->cho_info->time_based->start);
+      _EQ_CHECK_INT(a->cho_info->time_based->duration, b->cho_info->time_based->duration);
+    }
+  }
+
   return true;
 }
 
@@ -666,6 +737,13 @@ void free_xnap_handover_request(xnap_handover_req_t *msg)
 
   // Free UE history information
   free_xnap_ue_history_info_list(msg->ue_history_info, msg->num_last_visited_cells);
+
+  if (msg->cho_info) {
+    free(msg->cho_info->t_ng_node_ue_xnap_id);
+    free(msg->cho_info->estimated_arrival_probability);
+    free(msg->cho_info->time_based);
+    free(msg->cho_info);
+  }
 }
 
 /**
@@ -727,6 +805,19 @@ XNAP_XnAP_PDU_t *encode_xnap_handover_request_acknowledge(const xnap_handover_re
   ie4->criticality = XNAP_Criticality_ignore;
   ie4->value.present = XNAP_HandoverRequestAcknowledge_IEs__value_PR_OCTET_STRING;
   OCTET_STRING_fromBuf(&ie4->value.choice.OCTET_STRING, (const char *)ack->target2source.buf, ack->target2source.len);
+
+  /* Conditional Handover Information Acknowledge (O) */
+  if (ack->cho_info) {
+    asn1cSequenceAdd(out->protocolIEs.list, XNAP_HandoverRequestAcknowledge_IEs_t, ie5);
+    ie5->id = XNAP_ProtocolIE_ID_id_CHOinformation_Ack;
+    ie5->criticality = XNAP_Criticality_reject;
+    ie5->value.present = XNAP_HandoverRequestAcknowledge_IEs__value_PR_CHOinformation_Ack;
+    XNAP_CHOinformation_Ack_t *cho = &ie5->value.choice.CHOinformation_Ack;
+    cho->requestedTargetCellGlobalID = xnap_encode_target_cgi(&ack->cho_info->requested_target_cgi);
+    if (ack->cho_info->max_cho_preparations) {
+      asn1cCallocOne(cho->maxCHOoperations, *ack->cho_info->max_cho_preparations);
+    }
+  }
 
   return pdu;
 }
@@ -820,6 +911,18 @@ bool decode_xnap_handover_request_acknowledge(xnap_handover_req_ack_t *out, cons
         out->target2source = create_byte_array(container->size, container->buf);
       } break;
 
+      case XNAP_ProtocolIE_ID_id_CHOinformation_Ack: {
+        _EQ_CHECK_INT(ie->value.present, XNAP_HandoverRequestAcknowledge_IEs__value_PR_CHOinformation_Ack);
+        const XNAP_CHOinformation_Ack_t *cho = &ie->value.choice.CHOinformation_Ack;
+        out->cho_info = calloc_or_fail(1, sizeof(*out->cho_info));
+        if (!xnap_decode_target_cgi(&cho->requestedTargetCellGlobalID, &out->cho_info->requested_target_cgi))
+          return false;
+        if (cho->maxCHOoperations) {
+          out->cho_info->max_cho_preparations = malloc_or_fail(sizeof(*out->cho_info->max_cho_preparations));
+          *out->cho_info->max_cho_preparations = *cho->maxCHOoperations;
+        }
+      } break;
+
       default:
         AssertError(0, return false, "Unknown XnAP IE id %ld\n", ie->id);
         break;
@@ -871,6 +974,15 @@ bool eq_xnap_handover_request_acknowledge(const xnap_handover_req_ack_t *a, cons
   if (!eq_byte_array(&a->target2source, &b->target2source))
     return false;
 
+  _EQ_CHECK_INT(!a->cho_info, !b->cho_info);
+  if (a->cho_info) {
+    if (!eq_xnap_ngran_cgi(&a->cho_info->requested_target_cgi, &b->cho_info->requested_target_cgi))
+      return false;
+    _EQ_CHECK_INT(!a->cho_info->max_cho_preparations, !b->cho_info->max_cho_preparations);
+    if (a->cho_info->max_cho_preparations)
+      _EQ_CHECK_INT(*a->cho_info->max_cho_preparations, *b->cho_info->max_cho_preparations);
+  }
+
   return true;
 }
 
@@ -911,6 +1023,11 @@ void free_xnap_handover_request_acknowledge(xnap_handover_req_ack_t *msg)
 
   /* Free Target to Source transparent container */
   free_byte_array(msg->target2source);
+
+  if (msg->cho_info) {
+    free(msg->cho_info->max_cho_preparations);
+    free(msg->cho_info);
+  }
 }
 
 /**

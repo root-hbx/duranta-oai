@@ -73,8 +73,8 @@ void L1_nr_prach_procedures(PHY_VARS_gNB *gNB, prach_item_t *prach_id, nfapi_nr_
 
     if (prach_accepted) {
       LOG_A(NR_PHY,
-            "[RAPROC] %d.%d Initiating RA procedure with preamble %d, energy %d.%d dB (I0 %d, thres %d), delay %d start symbol "
-            "%u freq index %u\n",
+            "[RAPROC] %d.%d Initiating RA procedure with preamble %d, energy %d.%d dB (I0 %d, thres %d), delay %d (%d ns, "
+            "early window %d ns) start symbol %u freq index %u\n",
             frame,
             slot,
             res.max_preamble,
@@ -83,6 +83,8 @@ void L1_nr_prach_procedures(PHY_VARS_gNB *gNB, prach_item_t *prach_id, nfapi_nr_
             gNB->measurements.prach_I0,
             gNB->prach_thres,
             res.max_preamble_delay,
+            res.delay_ns,
+            prach_id->early_ns,
             prachStartSymbol,
             prach_pdu->num_ra);
 
@@ -106,6 +108,7 @@ void L1_nr_prach_procedures(PHY_VARS_gNB *gNB, prach_item_t *prach_id, nfapi_nr_
           .preamble_list = {
               {.preamble_index = res.max_preamble, .timing_advance = res.max_preamble_delay, .preamble_pwr = 0xffffffff}}};
       rach_ind->number_of_pdus++;
+      nr_prach_early_feedback(gNB, res.delay_ns);
     }
     gNB->measurements.prach_I0 = ((gNB->measurements.prach_I0 * 900) >> 10) + ((res.max_preamble_energy * 124) >> 10);
     if (frame == 0)

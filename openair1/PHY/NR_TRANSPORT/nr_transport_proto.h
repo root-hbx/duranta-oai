@@ -118,12 +118,15 @@ void nr_fill_ulsch(PHY_VARS_gNB *gNB,
                    uint8_t mu_group_size);
 
 void nr_schedule_rx_prach(PHY_VARS_gNB *gNB, int SFN, int Slot, nfapi_nr_prach_pdu_t *prach_pdu);
+/// closed loop of the PRACH early window: arrival delay (ns) of a detected preamble
+void nr_prach_early_feedback(PHY_VARS_gNB *gNB, int delay_ns);
 
 typedef struct rx_prach_out {
   uint16_t max_preamble;
   uint16_t max_preamble_energy;
   uint16_t max_preamble_delay;
   uint16_t max_preamble_delay_raw; // raw PRACH correlation-bin delay before TA normalization
+  int32_t delay_ns; // arrival relative to the zero delay of the detected preamble, negative if early
 } rx_prach_out_t;
 rx_prach_out_t rx_nr_prach(const prach_item_t *, int occasion);
 

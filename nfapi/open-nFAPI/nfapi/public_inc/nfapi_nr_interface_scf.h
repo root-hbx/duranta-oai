@@ -393,6 +393,8 @@ typedef struct
 
   nfapi_uint8_tlv_t ssb_per_rach;//SSB-per-RACH-occasion Value: 0: 1/8 1:1/4, 2:1/2 3:1 4:2 5:4, 6:8 7:16
   nfapi_uint8_tlv_t prach_multiple_carriers_in_a_band;//0 = disabled 1 = enabled
+  // vendor extension: how early (ns) a preamble may arrive, also accepted in RUNNING state (alone in the message)
+  nfapi_uint16_tlv_t early_margin_ns_ve;
 
 } nfapi_nr_prach_config_t;
 

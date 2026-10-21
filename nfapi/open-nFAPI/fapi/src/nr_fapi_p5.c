@@ -1244,6 +1244,13 @@ uint8_t pack_nr_config_request(void *msg, uint8_t **ppWritePackedMsg, uint8_t *e
 
   numTLVs += pNfapiMsg->ssb_table.case_v3.tl.tag == NFAPI_NR_FAPI_SSB_CASE_VENDOR_EXTENSION_TAG;
 
+  retval &= pack_nr_tlv(NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG,
+                        &(pNfapiMsg->prach_config.early_margin_ns_ve),
+                        ppWritePackedMsg,
+                        end,
+                        &pack_uint16_tlv_value);
+  numTLVs += pNfapiMsg->prach_config.early_margin_ns_ve.tl.tag == NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG;
+
   pNfapiMsg->num_tlv = numTLVs;
   retval &= push8(pNfapiMsg->num_tlv, &pNumTLVFields, end);
   return retval;
@@ -1413,6 +1420,9 @@ uint8_t unpack_nr_config_request(uint8_t **ppReadPackedMsg, uint8_t *end, void *
        {NFAPI_NR_FAPI_SSB_CASE_VENDOR_EXTENSION_TAG,
         &(pNfapiMsg->ssb_table.case_v3),
         &unpack_uint8_tlv_value},
+      {NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG,
+       &(pNfapiMsg->prach_config.early_margin_ns_ve),
+       &unpack_uint16_tlv_value},
       {NFAPI_NR_CONFIG_RSSI_MEASUREMENT_TAG, &(pNfapiMsg->measurement_config.rssi_measurement), &unpack_uint8_tlv_value},
       {NFAPI_NR_CONFIG_BEAMFORMING_TABLE_TAG, NULL, &unpack_dbt_table_tlv_value},
       {NFAPI_NR_CONFIG_PRECODING_TABLE_V6_TAG, NULL, &unpack_pm_table_tlv_value},

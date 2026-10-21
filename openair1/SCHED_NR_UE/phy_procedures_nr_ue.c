@@ -1090,19 +1090,24 @@ static int pbch_process(PHY_VARS_NR_UE *UE,
 static nr_meas_task_args_t *create_meas_task_args(const UE_nr_rxtx_proc_t *proc, PHY_VARS_NR_UE *ue)
 {
   NR_DL_FRAME_PARMS *fp = &ue->frame_parms;
-  // Extra headroom so that nr_slot_fep() can read all NR_N_SYMBOLS_SSB symbols
-  // when the PSS is detected at the very end of the samples_per_slot_wCP search window
-  uint32_t rxdata_size = fp->samples_per_slot_wCP
-                       + NR_N_SYMBOLS_SSB * (fp->ofdm_symbol_size + fp->nb_prefix_samples);
+  // the slot and, before it, a headroom so that nr_slot_fep() can read all NR_N_SYMBOLS_SSB symbols when the PSS is
+  // detected at the very end of the slot (the samples after the slot are not received yet)
+  const int headroom = NR_N_SYMBOLS_SSB * (fp->ofdm_symbol_size + fp->nb_prefix_samples);
+  uint32_t rxdata_size = headroom + get_samples_per_slot(proc->nr_slot_rx, fp);
   size_t total_size = sizeof(nr_meas_task_args_t) + fp->nb_antennas_rx * rxdata_size * sizeof(c16_t);
   nr_meas_task_args_t *args = malloc_or_fail(total_size);
   args->proc = *proc;
   args->ue = ue;
   args->rxdata_size = rxdata_size;
   args->nb_ant = fp->nb_antennas_rx;
-  uint32_t slot_offset = get_samples_slot_timestamp(fp, proc->nr_slot_rx);
-  for (int i = 0; i < fp->nb_antennas_rx; i++)
-    memcpy(args->rxdata_ant + i * rxdata_size, &ue->common_vars.rxdata[i][slot_offset], rxdata_size * sizeof(c16_t));
+  const int start = (int)get_samples_slot_timestamp(fp, proc->nr_slot_rx) - headroom;
+  // before the first slot: the end of the frame (previous frame)
+  const int wrapped = start < 0 ? -start : 0;
+  for (int i = 0; i < fp->nb_antennas_rx; i++) {
+    c16_t *dst = args->rxdata_ant + i * rxdata_size;
+    memcpy(dst, &ue->common_vars.rxdata[i][fp->samples_per_frame - wrapped], wrapped * sizeof(c16_t));
+    memcpy(dst + wrapped, &ue->common_vars.rxdata[i][start + wrapped], (rxdata_size - wrapped) * sizeof(c16_t));
+  }
   return args;
 }
 

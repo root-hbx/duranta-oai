@@ -675,6 +675,10 @@ void *ngap_gNB_process_itti_msg(void *notUsed)
         ngap_gNB_path_switch_request(instance, &NGAP_PATH_SWITCH_REQ(received_msg));
         break;
 
+      case NGAP_UE_CONTEXT_LOCAL_RELEASE:
+        free(ngap_detach_ue_context(NGAP_UE_CONTEXT_LOCAL_RELEASE(received_msg).gNB_ue_ngap_id));
+        break;
+
       case NGAP_HANDOVER_REQUIRED:
         if (ngap_handover_required(instance, &NGAP_HANDOVER_REQUIRED(received_msg)) < 0) {
           NGAP_ERROR("Handover Required failure: indication to RRC is not sent!\n");

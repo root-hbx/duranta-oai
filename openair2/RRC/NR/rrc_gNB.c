@@ -62,6 +62,8 @@
 #include "rrc_gNB_du.h"
 #include "rrc_cell_management.h"
 #include "rrc_gNB_mobility.h"
+#include "rrc_gNB_XNAP.h"
+#include "openair3/NGAP/ngap_gNB_mobility_management.h"
 #include "rrc_gNB_radio_bearers.h"
 #include "rrc_cell_management.h"
 #include "rrc_messages_types.h"
@@ -1602,8 +1604,9 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
 
   const nr_rrc_cell_container_t *cell = get_previous_cell_by_pci_in_du(rrc, current_cell, du, (uint16_t)physCellId);
   if (cell == NULL) {
-    LOG_E(NR_RRC, "received CCCH message, but no corresponding cell found for PCI %ld in DU (assoc_id %d)\n", physCellId, assoc_id);
-    return;
+    // the previous cell is not one of this DU (e.g., of another gNB): the UE context cannot be retrieved
+    LOG_E(NR_RRC, "no cell with PCI %ld in DU (assoc_id %d), fallback to RRC setup\n", physCellId, assoc_id);
+    goto fallback_rrc_setup;
   }
 
   /* TS 38.331 §5.3.7.1: retrieve UE context (C-RNTI + physCellId): if it cannot be
@@ -1646,7 +1649,12 @@ static void rrc_handle_RRCReestablishmentRequest(gNB_RRC_INST *rrc,
   const nr_rrc_cell_container_t *source_cell = source_ctx ? source_ctx->cell : NULL;
   bool ho_reestab_on_source = source_cell ? cell->info.cell_id == source_cell->info.cell_id : false;
 
-  if (ho_reestab_on_source) {
+  if (ho_reestab_on_source && source_ctx->cho) {
+    // the UE stayed in the source cell: cancel the conditional handover candidates (5.3.7: the UE removed them)
+    LOG_W(NR_RRC, "UE %d: re-establishment with conditional handover prepared, cancel it\n", UE->rrc_ue_id);
+    source_ctx->ho_cancel(rrc, UE);
+    nr_rrc_finalize_ho(UE);
+  } else if (ho_reestab_on_source) {
     /* the UE came back on the source DU while doing handover, release at
      * target DU and and update the association to the initial DU one */
     LOG_W(NR_RRC, "handover for UE %d/RNTI %04x failed, rollback to original cell\n", UE->rrc_ue_id, UE->rnti);
@@ -1900,8 +1908,17 @@ static void process_Event_Based_Measurement_Report(gNB_RRC_INST *rrc,
             if (neighbourCellRSRP > best_rsrp) {
               // UE can send multiple neighbour cells A3 event report in 1 Meas Report. So, we need to find the best neighbour
               best_rsrp = neighbourCellRSRP;
-              LOG_I(NR_RRC, "HO LOG: Serving Cell RSRP: %d - Best Neighbor RSRP: %d ! Trigger N2 HO\n", servingCellRSRP, best_rsrp);
-              nr_rrc_trigger_n2_ho(rrc, ue, neighbour);
+              // Xn handover if there is an Xn interface to the target gNB, N2 otherwise
+              const sctp_assoc_t xn_assoc_id = rrc_get_xn_assoc_id(rrc, neighbour->gNB_ID);
+              LOG_I(NR_RRC,
+                    "HO LOG: Serving Cell RSRP: %d - Best Neighbor RSRP: %d ! Trigger %s HO\n",
+                    servingCellRSRP,
+                    best_rsrp,
+                    xn_assoc_id ? "Xn" : "N2");
+              if (xn_assoc_id)
+                nr_rrc_trigger_xn_ho(rrc, ue, neighbour, xn_assoc_id);
+              else
+                nr_rrc_trigger_n2_ho(rrc, ue, neighbour);
             }
             LOG_D(NR_RRC, "HO LOG: Trigger N2 HO for the neighbour gnb: %u cell: %lu\n", neighbour->gNB_ID, neighbour->nrcell_id);
           }
@@ -2300,9 +2317,9 @@ static void handle_rrcReconfigurationComplete(gNB_RRC_INST *rrc, gNB_RRC_UE_t *U
     }
   }
 
-  if (UE->ho_context != NULL) {
+  // at a conditional handover source, the UE completes the CHO configuration and stays
+  if (UE->ho_context != NULL && UE->ho_context->target != NULL) {
     LOG_A(NR_RRC, "handover for UE %d/RNTI %04x complete!\n", UE->rrc_ue_id, UE->rnti);
-    DevAssert(UE->ho_context->target != NULL);
 
     UE->ho_context->target->ho_success(rrc, UE);
     nr_rrc_finalize_ho(UE);
@@ -2663,7 +2680,7 @@ void e1_send_bearer_updates(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, int n, f1ap_drb
 }
 
 /** @brief Request PDCP status from CU-UP during inter-CU handover */
-static void e1_request_pdcp_status(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
+void e1_request_pdcp_status(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
 {
   if (!is_cuup_associated(rrc))
     return;
@@ -2860,6 +2877,24 @@ static void rrc_CU_process_ue_context_release_request(MessageDef *msg_p, sctp_as
   if (UE->ho_context != NULL) {
     nr_ho_source_cu_t *source_ctx = UE->ho_context->source;
     bool from_source_du = source_ctx && source_ctx->cell->assoc_id == assoc_id;
+    if (from_source_du && source_ctx->cho) {
+      /* conditional handover prepared: the UE lost at the source DU may be executing it, keep the
+       * handover context until Handover Success or a re-establishment */
+      LOG_W(NR_RRC,
+            "UE %d: release request from source cell PCI %d with conditional handover prepared\n",
+            UE->rrc_ue_id,
+            source_ctx->cell->info.pci);
+      f1ap_ue_context_rel_cmd_t cmd = {
+          .gNB_CU_ue_id = UE->rrc_ue_id,
+          .gNB_DU_ue_id = cu_get_f1_ue_data(UE->rrc_ue_id).secondary_ue,
+          .cause = F1AP_CAUSE_RADIO_NETWORK,
+          .cause_value = 5, // 5 = F1AP_CauseRadioNetwork_interaction_with_other_procedure
+      };
+      if (!source_ctx->du_released)
+        rrc->mac_rrc.ue_context_release_command(assoc_id, &cmd);
+      source_ctx->du_released = true;
+      return;
+    }
     if (from_source_du) {
       // we received release request from the source DU, but HO is still
       // ongoing; free the UE, and remove the HO context.
@@ -2957,6 +2992,8 @@ static void rrc_CU_process_ue_context_release_complete(MessageDef *msg_p)
      * operation (i.e, handover) */
     rrc_gNB_send_NGAP_UE_CONTEXT_RELEASE_COMPLETE(0, UE->rrc_ue_id, &UE->pduSessions);
     rrc_remove_ue(RC.nrrrc[0], ue_context_p);
+  } else if (UE->xn_release) {
+    rrc_remove_ue(RC.nrrrc[0], ue_context_p);
   }
 }
 
@@ -2977,7 +3014,8 @@ static void rrc_CU_process_ue_context_modification_response(MessageDef *msg_p, i
   if (UE->nrdc && rrc_gnb_nrdc_wait_for_scg_failure_context_modification_response(UE))
     return nrdc_scg_failure_context_modification_response(UE, rrc, resp);
 
-  bool is_inter_cu_ho = UE->ho_context && UE->ho_context->source && !UE->ho_context->target;
+  // conditional handover: the PDCP status is requested at HANDOVER SUCCESS, not after the CHO configuration
+  bool is_inter_cu_ho = UE->ho_context && UE->ho_context->source && !UE->ho_context->target && !UE->ho_context->source->cho;
   if (resp->drbs_len > 0) { // DRB to setup
     store_du_f1u_tunnel(resp->drbs, resp->drbs_len, UE);
     e1_send_bearer_updates(rrc, UE, resp->drbs_len, resp->drbs);
@@ -3926,6 +3964,11 @@ void *rrc_gnb_task(void *args_p)
         rrc_gNB_process_NGAP_DL_RAN_STATUS_TRANSFER(msg_p, instance);
         break;
 
+      case NGAP_PATH_SWITCH_REQ_ACK:
+        rrc_gNB_process_path_switch_req_ack(RC.nrrrc[instance], &NGAP_PATH_SWITCH_REQ_ACK(msg_p));
+        free_ng_path_switch_req_ack(&NGAP_PATH_SWITCH_REQ_ACK(msg_p));
+        break;
+
       /* Messages from F1AP task */
       case F1AP_SETUP_REQ:
         AssertFatal(!NODE_IS_DU(RC.nrrrc[instance]->node_type), "should not receive F1AP_SETUP_REQUEST in DU!\n");
@@ -4117,6 +4160,16 @@ void *rrc_gnb_task(void *args_p)
         rrc_remove_xn_candidate(RC.nrrrc[instance], XNAP_PEER_SHUTDOWN_IND(msg_p).gnb_id);
         break;
 
+      case XNAP_HANDOVER_REQ:
+      case XNAP_HANDOVER_REQ_ACK:
+      case XNAP_HANDOVER_PREP_FAILURE:
+      case XNAP_SN_STATUS_TRANSFER:
+      case XNAP_UE_CONTEXT_RELEASE:
+      case XNAP_HANDOVER_CANCEL:
+      case XNAP_HANDOVER_SUCCESS:
+        rrc_gNB_process_xnap_message(RC.nrrrc[instance], msg_p);
+        break;
+
       default:
         LOG_E(NR_RRC, "[gNB %ld] Received unexpected message %s\n", instance, msg_name_p);
         break;
@@ -4281,6 +4334,10 @@ void rrc_f1_ue_context_setup_for_target_du(const gNB_RRC_INST *rrc,
   req.drbs = drbs;
   req.cu_to_du_rrc_info.meas_config = meas_config;
   req.cu_to_du_rrc_info.ho_prep_info = hpi;
+  if (ho_prep_info && ue->ho_context && ue->ho_context->target && ue->ho_context->target->cho_window) {
+    req.cho_time_window = malloc_or_fail(sizeof(*req.cho_time_window));
+    *req.cho_time_window = *ue->ho_context->target->cho_window;
+  }
 
   RETURN_IF_INVALID_ASSOC_ID(cell->assoc_id);
   rrc->mac_rrc.ue_context_setup_request(cell->assoc_id, &req);

@@ -40,6 +40,7 @@ typedef struct {
   int prach_sequence_length;
   int restricted_set;
   int numerology_index;
+  int early_ns; // how early a preamble may arrive, see rx_nr_prach()
   int nb_rx;
   int ant_start;
   c16_t (*Xu)[839];
@@ -405,6 +406,10 @@ typedef struct PHY_VARS_gNB_s {
   int pucch0_thres;
   int pusch_thres;
   int prach_thres;
+  /// how early a PRACH preamble may arrive (ns), from the MAC (CONFIG.request vendor extension)
+  int prach_early_ff_ns;
+  /// earliest arrival of the recent preambles (ns), see nr_prach_early_ns()
+  int prach_early_obs_ns;
   int srs_thres;
   uint64_t bad_pucch;
   int num_ulprbbl;

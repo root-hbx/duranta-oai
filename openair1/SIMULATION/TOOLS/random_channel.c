@@ -541,7 +541,7 @@ double get_normalization_ch_factor(channel_desc_t *desc)
 }
 
 // Load a satellite orbit trace CSV. The header names the columns: "time_s" or "time_ms",
-// "pos_x", "pos_y", "pos_z" (ECEF, m) and "vel_x", "vel_y", "vel_z" (ECEF, m/s), in any order.
+// "pos_x", "pos_y", "pos_z" (ECEF, m) and "vel_x", "vel_y", "vel_z" (ECEF, m/s), in any order, and optionally "utc_ms".
 int load_sat_trace(channel_desc_t *desc, const char *filepath)
 {
   FILE *fp = fopen(filepath, "r");
@@ -562,6 +562,8 @@ int load_sat_trace(channel_desc_t *desc, const char *filepath)
   const char *names[] = {"time_s", "pos_x", "pos_y", "pos_z", "vel_x", "vel_y", "vel_z"};
   int col[7] = {-1, -1, -1, -1, -1, -1, -1};
   double time_scale = 1.0;
+  int col_utc = -1;
+  double utc_ms = 0;
   int ncols = 0;
   for (char *tok = strtok(line, ","); tok; tok = strtok(NULL, ","), ncols++) {
     while (*tok == ' ')
@@ -571,6 +573,8 @@ int load_sat_trace(channel_desc_t *desc, const char *filepath)
       time_scale = 1e-3;
       continue;
     }
+    if (strcmp(tok, "utc_ms") == 0)
+      col_utc = ncols;
     for (int k = 0; k < 7; k++)
       if (strcmp(tok, names[k]) == 0)
         col[k] = ncols;
@@ -604,6 +608,8 @@ int load_sat_trace(channel_desc_t *desc, const char *filepath)
     }
     sat_trace_sample_t *smp = &trace[len++];
     smp->t = vals[col[0]] * time_scale;
+    if (len == 1 && col_utc >= 0)
+      utc_ms = vals[col_utc] - smp->t * 1000;
     for (int k = 0; k < 3; k++) {
       smp->pos[k] = vals[col[1 + k]];
       smp->vel[k] = vals[col[4 + k]];
@@ -625,6 +631,7 @@ int load_sat_trace(channel_desc_t *desc, const char *filepath)
   free(desc->sat_trace);
   desc->sat_trace = trace;
   desc->sat_trace_len = len;
+  desc->sat_trace_utc_ms = utc_ms;
   desc->sat_trace_last_idx = 0;
   free(desc->sat_trace_file);
   desc->sat_trace_file = strdup(filepath);
@@ -2395,6 +2402,8 @@ int load_channellist(uint8_t nb_tx, uint8_t nb_rx, double sampling_rate, uint64_
   int pindex_TYPE = config_paramidx_fromname(achannel_params,numparams, CHANNELMOD_MODEL_TYPE_PNAME);
   int pindex_TRACE = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_TRACE_PNAME);
   int pindex_ZOH = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_ZOH_PNAME);
+  int pindex_CLOCK = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_CLOCK_PNAME);
+  int pindex_UTC = config_paramidx_fromname(achannel_params, numparams, CHANNELMOD_MODEL_UTC_PNAME);
   const char *pos_ue_pnames[3] = {CHANNELMOD_MODEL_POS_UE_X_PNAME,
                                   CHANNELMOD_MODEL_POS_UE_Y_PNAME,
                                   CHANNELMOD_MODEL_POS_UE_Z_PNAME};
@@ -2444,6 +2453,10 @@ int load_channellist(uint8_t nb_tx, uint8_t nb_rx, double sampling_rate, uint64_
                   channeldesc_p->model_name);
       AssertFatal(load_sat_trace(channeldesc_p, trace_path) == 0, "Failed to load satellite trace %s\n", trace_path);
       channeldesc_p->sat_interp_zoh = *(channel_list.paramarray[i][pindex_ZOH].iptr) != 0;
+      channeldesc_p->sat_trace_common_clock = *(channel_list.paramarray[i][pindex_CLOCK].iptr) != 0;
+      const uint64_t utc_start = *(channel_list.paramarray[i][pindex_UTC].u64ptr);
+      if (utc_start > 0)
+        channeldesc_p->sat_trace_utc_ms = utc_start;
       for (int k = 0; k < 3; k++) {
         channeldesc_p->pos_ue[k] = *(channel_list.paramarray[i][pindex_POS_UE[k]].dblptr);
         channeldesc_p->pos_gnb[k] = *(channel_list.paramarray[i][pindex_POS_GNB[k]].dblptr);

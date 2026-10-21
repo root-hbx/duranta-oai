@@ -180,6 +180,13 @@ byte_array_t get_HandoverPreparationInformation(nr_rrc_reconfig_param_t *params)
 byte_array_t get_HandoverCommandMessage(nr_rrc_reconfig_param_t *params);
 void fill_removal_lists_from_source_measConfig(NR_MeasConfig_t *measConfig, byte_array_t prep_info);
 byte_array_t doRRCReconfiguration_from_HandoverCommand(byte_array_t handoverCommand);
+NR_MeasObjectToAddMod_t *get_neighbour_MeasObject(const NR_MeasTiming_t *mt, int band, int ssb_arfcn, int pci, NR_MeasObjectId_t id);
+NR_MeasIdToAddMod_t *get_MeasId(NR_MeasId_t measId, NR_ReportConfigId_t reportConfigId, NR_MeasObjectId_t measObjectId);
+byte_array_t get_RRCReconfiguration_from_HandoverCommand(const byte_array_t handoverCommand);
+struct NR_ConditionalReconfiguration_r16;
+byte_array_t do_RRCReconfiguration_cho(uint8_t transaction_id,
+                                       NR_MeasConfig_t *meas_config,
+                                       struct NR_ConditionalReconfiguration_r16 *cond_reconfig);
 
 struct NR_UE_NR_Capability *get_ue_nr_capability(int rnti, uint8_t *buf, uint32_t len);
 NR_UE_NR_Capability_t *decode_nr_ue_capability(int rnti, const NR_UE_CapabilityRAT_ContainerList_t *clist);

@@ -3005,6 +3005,7 @@ BEGIN
 IMPORTS
 
 
+	id-CHOTimeBasedInformation,
 	id-CNTypeRestrictionsForEquivalent,
 	id-CNTypeRestrictionsForServing,
 	id-Additional-UL-NG-U-TNLatUPF-List,
@@ -3716,9 +3717,26 @@ CHOinformation-Req ::= SEQUENCE {
 	...
 }
 
+-- Rel-18 (TS 38.423 V18.9.0), for NTN time-based CHO
 CHOinformation-Req-ExtIEs XNAP-PROTOCOL-EXTENSION ::={
+	{ ID id-CHOTimeBasedInformation	CRITICALITY reject	EXTENSION CHOTimeBasedInformation	PRESENCE optional},
 	...
 }
+
+CHOTimeBasedInformation ::= SEQUENCE {
+	cHO-HOWindowStart			CHO-HandoverWindowStart,
+	cHO-HOWindowDuration		CHO-HandoverWindowDuration,
+	iE-Extensions				ProtocolExtensionContainer { {CHOTimeBasedInformation-ExtIEs} }	OPTIONAL,
+	...
+}
+
+CHOTimeBasedInformation-ExtIEs XNAP-PROTOCOL-EXTENSION ::= {
+	...
+}
+
+CHO-HandoverWindowStart ::= INTEGER (0..549755813887)
+
+CHO-HandoverWindowDuration ::= INTEGER (1..6000)
 
 
 CHOinformation-Ack ::= SEQUENCE {
@@ -8707,6 +8725,8 @@ id-SNTriggered  																					ProtocolIE-ID ::= 229
 id-DLCarrierList																					ProtocolIE-ID ::= 230
 id-ExtendedTAISliceSupportList																		ProtocolIE-ID ::= 231
 id-cellAssistanceInfo-EUTRA																			ProtocolIE-ID ::= 232
+-- Rel-18 (TS 38.423 V18.9.0)
+id-CHOTimeBasedInformation																			ProtocolIE-ID ::= 382
 
 
 END

@@ -338,6 +338,17 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
   NR_DL_FRAME_PARMS *fp = &RC.gNB[Mod_id]->frame_parms;
   nfapi_nr_config_request_scf_t *gNB_config = &RC.gNB[Mod_id]->gNB_config;
 
+  const nfapi_uint16_tlv_t *early = &phy_config->cfg->prach_config.early_margin_ns_ve;
+  if (early->tl.tag == NFAPI_NR_FAPI_PRACH_EARLY_MARGIN_VENDOR_EXTENSION_TAG) {
+    RC.gNB[Mod_id]->prach_early_ff_ns = early->value;
+    LOG_I(PHY, "PRACH early arrival margin %d ns\n", early->value);
+    // RUNNING state: alone in the message, it only updates the margin
+    if (RC.gNB[Mod_id]->configured && phy_config->cfg->num_tlv == 1) {
+      gNB_config->prach_config.early_margin_ns_ve = *early;
+      return;
+    }
+  }
+
   copy_config_request(phy_config->cfg, gNB_config);
 
   uint64_t dl_bw_khz = (12*gNB_config->carrier_config.dl_grid_size[gNB_config->ssb_config.scs_common.value].value)*(15<<gNB_config->ssb_config.scs_common.value);

@@ -25,6 +25,7 @@ typedef struct nr_rlc_sdu_t {
    * transmission is used for statistics
    */
   uint64_t time_of_arrival;  /* unit microsecond */
+  uint64_t t_arrival;        /* entity time (ms) at reception, for the discard timer */
 } nr_rlc_sdu_t;
 
 typedef struct nr_rlc_sdu_segment_t {

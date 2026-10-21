@@ -522,6 +522,7 @@ static void nr_pdcp_entity_reestablish_drb_am(nr_pdcp_entity_t *entity,
 
   /* Flag PDCP entity as re-established */
   entity->entity_suspended = false;
+  entity->tx_frozen = false;
 }
 
 static void nr_pdcp_entity_reestablish_drb_um(nr_pdcp_entity_t *entity,
@@ -545,6 +546,7 @@ static void nr_pdcp_entity_reestablish_drb_um(nr_pdcp_entity_t *entity,
 
   /* Flag PDCP entity as re-established */
   entity->entity_suspended = false;
+  entity->tx_frozen = false;
 }
 
 static void nr_pdcp_entity_reestablish_srb(nr_pdcp_entity_t *entity,

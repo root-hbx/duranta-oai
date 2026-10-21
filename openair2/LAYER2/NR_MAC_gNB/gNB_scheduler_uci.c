@@ -959,6 +959,8 @@ void handle_nr_uci_pucch_0_1(module_id_t mod_id, int cell_id, frame_t frame, slo
         harq->start_tci_timer = false;
       }
       handle_dl_harq(cell, UE, pid, success, cell->dl_bler.harq_round_max);
+      if (harq_confidence == 0)
+        sched_ctrl->transm_timeout_idle = 0; // the UE answers
       if (is_ra) {
         bool ue_rejected = nr_check_Msg4_MsgB_Ack(nrmac, cell, frame, slot, UE, success);
         if (ue_rejected) {
@@ -1062,6 +1064,8 @@ void handle_nr_uci_pucch_2_3_4(module_id_t mod_id, int cell_id, frame_t frame, s
         harq->start_tci_timer = false;
       }
       handle_dl_harq(cell, UE, pid, success, cell->dl_bler.harq_round_max);
+      if (uci_234->harq.harq_crc != 1)
+        sched_ctrl->transm_timeout_idle = 0; // the UE answers
     }
     free(uci_234->harq.harq_payload);
   }

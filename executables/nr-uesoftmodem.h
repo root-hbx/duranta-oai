@@ -21,6 +21,7 @@ extern uint16_t ue_id_g;
 #define  CONFIG_HLP_TIME_SYNC_P            "coefficient for Proportional part of time sync PI controller\n"
 #define  CONFIG_HLP_TIME_SYNC_I            "coefficient for Integrating part of time sync PI controller\n"
 #define  CONFIG_HLP_NTN_INIT_TIME_DRIFT    "Initial NTN DL time drift (feeder link and service link), given in µs/s\n"
+#define  CONFIG_HLP_NTN_GNSS_UTC           "NTN GNSS UTC at rfsim time 0, in ms since 1970 (utc_ms of the satellite trace start), 0: system clock\n"
 #define  CONFIG_HLP_AUTONOMOUS_TA          "Autonomously update TA based on DL drift (useful if main contribution to DL drift is movement, e.g. LEO satellite)\n"
 #define  CONFIG_HLP_INITIAL_FO             "Initially compensated DL frequency offset (e.g. known Doppler shift in NTN LEO scenario)\n"
 #define  CONFIG_HLP_FREQ_SYNC_P            "coefficient for Proportional part of continuous frequency offset compensation PI controller\n"
@@ -74,6 +75,7 @@ extern uint16_t ue_id_g;
   {"time-sync-P",                  CONFIG_HLP_TIME_SYNC_P,     0,               .dblptr=&(nrUE_params.time_sync_P),          .defdblval=0.5,    TYPE_DOUBLE,   0}, \
   {"time-sync-I",                  CONFIG_HLP_TIME_SYNC_I,     0,               .dblptr=&(nrUE_params.time_sync_I),          .defdblval=0.0,    TYPE_DOUBLE,   0}, \
   {"ntn-initial-time-drift",       CONFIG_HLP_NTN_INIT_TIME_DRIFT, 0,           .dblptr=&(nrUE_params.ntn_init_time_drift),  .defdblval=0.0,    TYPE_DOUBLE,   0}, \
+  {"ntn-gnss-utc-start",           CONFIG_HLP_NTN_GNSS_UTC,    0,               .u64ptr=&(nrUE_params.ntn_gnss_utc_start),   .defint64val=0,    TYPE_UINT64,   0}, \
   {"autonomous-ta",                CONFIG_HLP_AUTONOMOUS_TA,   PARAMFLAG_BOOL,  .iptr=&(nrUE_params.autonomous_ta),          .defintval=0,      TYPE_INT,      0}, \
   {"initial-fo",                   CONFIG_HLP_INITIAL_FO,      0,               .dblptr=&(nrUE_params.initial_fo),           .defdblval=0.0,    TYPE_DOUBLE,   0}, \
   {"freq-sync-P",                  CONFIG_HLP_FREQ_SYNC_P,     0,               .dblptr=&(nrUE_params.freq_sync_P),          .defdblval=0.01,   TYPE_DOUBLE,   0}, \
@@ -107,6 +109,7 @@ typedef struct {
   double time_sync_P;
   double time_sync_I;
   double ntn_init_time_drift;
+  uint64_t ntn_gnss_utc_start;
   int autonomous_ta;
   double initial_fo;
   double freq_sync_P;

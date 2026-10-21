@@ -1075,6 +1075,7 @@ void nr_ra_succeeded(NR_UE_MAC_INST_t *mac, const frame_t frame, const int slot)
   mac->msg3_C_RNTI = false;
   ra->ra_state = nrRA_SUCCEEDED;
   mac->state = UE_CONNECTED;
+  mac->serving_ntn_config = mac->phy_config.config_req.ntn_config;
   free_and_zero(ra->Msg3_buffer);
   nr_mac_rrc_ra_ind(mac->ue_id, true);
 }

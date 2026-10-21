@@ -25,6 +25,7 @@
 
 #include "rrc_defs.h"
 #include "rrc_proto.h"
+#include "rrc_UE_cho.h"
 #include "verify_RRC.h"
 #include "L2_interface_ue.h"
 #include "LAYER2/NR_MAC_UE/mac_proto.h"
@@ -35,6 +36,7 @@
 #include "nr-uesoftmodem.h"
 #include "plmn_data.h"
 #include "nr_pdcp/nr_pdcp_oai_api.h"
+#include "nr_pdcp/nr_pdcp_asn1_utils.h"
 #include "openair3/SECU/secu_defs.h"
 #include "openair3/SECU/key_nas_deriver.h"
 
@@ -139,6 +141,9 @@ static void nr_rrc_trigger_mac_ra(NR_UE_RRC_INST_t *rrc, nr_mac_ra_start_cause_t
   rrc_msg.payload.start_ra.cause = cause;
   nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
 }
+
+static int nr_rrc_cell_selected_after_failure(NR_UE_RRC_INST_t *rrc);
+static void nr_rrc_cho_execute(NR_UE_RRC_INST_t *rrc, int idx, bool recovery);
 
 NR_UE_RRC_INST_t *get_NR_UE_rrc_inst(int instance)
 {
@@ -260,7 +265,14 @@ static void nr_rrc_process_ntnconfig(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *S
 {
   SI_info->SInfo_r17.sib19_validity = true;
   // Check if Epochtime is sent or not
-  int diff_frames = eval_epoch_time(SI_info, ntncfg, frame, is_targetcell);
+  int diff_frames = 0;
+  if (is_targetcell) {
+    // epoch relative to the reception of the reconfiguration, then to now
+    diff_frames = eval_epoch_time(SI_info, ntncfg, rrc->target_epoch_ref_frame, true);
+    diff_frames -= (rrc->current_hfn - rrc->target_epoch_ref_hfn) * 1024 + frame - rrc->target_epoch_ref_frame;
+  } else {
+    diff_frames = eval_epoch_time(SI_info, ntncfg, frame, false);
+  }
 
   if (ntncfg->ntn_UlSyncValidityDuration_r17) { // ulsyncvalidity duration configured
     int val430_ms = 0, sib19_timer_ms = 0;
@@ -360,14 +372,18 @@ static void nr_decode_SI(NR_UE_RRC_SI_INFO *SI_info, NR_SystemInformation_t *si,
   }
 
   if (sib19) {
+    // the essential SI of an NTN cell selected after a failure is acquired
+    const int cho = rrc->is_NTN_UE ? nr_rrc_cell_selected_after_failure(rrc) : -1;
     nr_mac_rrc_message_t rrc_msg = {0};
     rrc_msg.payload_type = NR_MAC_RRC_CONFIG_OTHER_SIB;
     nr_mac_rrc_config_other_sib_t *sib19_msg = &rrc_msg.payload.config_other_sib;
     asn_copy(&asn_DEF_NR_SIB19_r17, (void **)&sib19_msg->sib19, sib19);
     sib19_msg->hfn = hfn;
     sib19_msg->frame = frame;
-    sib19_msg->can_start_ra = rrc->is_NTN_UE;
+    sib19_msg->can_start_ra = rrc->is_NTN_UE && cho < 0;
     nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
+    if (cho >= 0)
+      nr_rrc_cho_execute(rrc, cho, true);
   }
 }
 
@@ -529,12 +545,16 @@ static void nr_rrc_process_sib1(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *SI_inf
   // RRC storage of SIB1 timers and constants (eg needed in re-establishment)
   UPDATE_IE(rrc->timers_and_constants.sib1_TimersAndConstants, sib1->ue_TimersAndConstants, NR_UE_TimersAndConstants_t);
 
+  // the essential SI of a TN cell selected after a failure is acquired
+  const int cho = rrc->is_NTN_UE ? -1 : nr_rrc_cell_selected_after_failure(rrc);
   nr_mac_rrc_message_t rrc_msg = {0};
   rrc_msg.payload_type = NR_MAC_RRC_CONFIG_SIB1;
   nr_mac_rrc_config_sib1_t *config_sib1 = &rrc_msg.payload.config_sib1;
   config_sib1->sib1 = sib1;
-  config_sib1->can_start_ra = !rrc->is_NTN_UE;
+  config_sib1->can_start_ra = !rrc->is_NTN_UE && cho < 0;
   nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
+  if (cho >= 0)
+    nr_rrc_cho_execute(rrc, cho, true);
 }
 
 /** @brief Synchronize NH chain based on nextHopChainingCount
@@ -548,40 +568,34 @@ static void nr_rrc_process_sib1(NR_UE_RRC_INST_t *rrc, NR_UE_RRC_SI_INFO *SI_inf
  * @param kamf K_AMF key from NAS
  * @param kgnb Current KgNB key (input/output)
  * @param nh Current NH parameter (input/output)
- * @param nhcc Pointer to current nextHopChainingCount (input/output)
- * @param target_ncc Target nextHopChainingCount value to synchronize to */
+ * @param nhcc Pointer to the number of NH derivations so far (input/output)
+ * @param target Number of NH derivations to reach */
 static void nr_sync_nh_chain(const uint8_t kamf[SECURITY_KEY_LEN],
                              uint8_t kgnb[SECURITY_KEY_LEN],
                              uint8_t nh[SECURITY_KEY_LEN],
                              uint64_t *nhcc,
-                             const int8_t target_ncc)
+                             const uint64_t target)
 {
   // If the UE received an NCC value that was different from the NCC associated with the
   // currently active KgNB, the UE shall first synchronize the locally kept NH
   // parameter by computing the function defined in Annex A.10 iteratively (and increasing
   // the NCC value until it matches the NCC value received from the source ng-gNB).
-  if (target_ncc <= *nhcc) {
-    LOG_W(NR_RRC, "Received NCC=%d is less than or equal to current nhcc=%ld (nothing to sync)\n", target_ncc, *nhcc);
-    return;
+  LOG_I(NR_RRC, "Synchronizing NH chain: current nhcc=%ld, target %ld\n", *nhcc, target);
+  if (*nhcc == 0) {
+    // First derivation: derive KgNB from KAMF, then derive NH from KgNB (per TS 33.501 A.10)
+    // Note: For the first NH derivation, we use UL NAS COUNT = 0 to match the AMF's derivation
+    // during handover. The AMF derives the first NH using the UL NAS COUNT from the last
+    // successful NAS SMC, which is 0 for the initial derivation.
+    derive_kgnb(kamf, 0, kgnb);
+    nr_derive_nh(kamf, kgnb, nh);
+    *nhcc = 1;
   }
-  if (target_ncc > *nhcc) {
-    LOG_I(NR_RRC, "Synchronizing NH chain: current nhcc=%ld, target ncc=%d\n", *nhcc, target_ncc);
-    if (*nhcc == 0) {
-      // First derivation: derive KgNB from KAMF, then derive NH from KgNB (per TS 33.501 A.10)
-      // Note: For the first NH derivation, we use UL NAS COUNT = 0 to match the AMF's derivation
-      // during handover. The AMF derives the first NH using the UL NAS COUNT from the last
-      // successful NAS SMC, which is 0 for the initial derivation.
-      derive_kgnb(kamf, 0, kgnb);
-      nr_derive_nh(kamf, kgnb, nh);
-      *nhcc = 1;
-    }
-    // Following derivations: iterate from current nhcc to target_ncc
-    for (uint8_t i = *nhcc; i < target_ncc; i++) {
-      LOG_D(NR_RRC, "Derive keys for ChainingCount = %d\n", i);
-      nr_derive_nh(kamf, nh, nh);
-    }
-    *nhcc = target_ncc;
+  // Following derivations: iterate from current nhcc to target
+  for (uint64_t i = *nhcc; i < target; i++) {
+    LOG_D(NR_RRC, "Derive keys for ChainingCount = %ld\n", i);
+    nr_derive_nh(kamf, nh, nh);
   }
+  *nhcc = target;
 }
 
 /** @brief Derive KNG-RAN* (KgNB*) using horizontal derivation
@@ -645,27 +659,19 @@ static void nr_derive_kgnb_vertical(const uint16_t pci,
  * @param received_ncc Received nextHopChainingCount value */
 static void nr_update_kgnb_from_ncc(NR_UE_RRC_INST_t *rrc, const uint8_t kamf[SECURITY_KEY_LEN], int8_t received_ncc)
 {
-  const uint64_t original_nhcc = rrc->nhcc;
-
-  if (received_ncc == original_nhcc) {
+  // NCC is the 3 least significant bits of the NH chain count, it wraps around (TS 33.501 6.9.2.3.3)
+  const int steps = (received_ncc - rrc->nhcc) & 7;
+  if (steps == 0) {
     // NCC values match: use horizontal derivation from currently active KgNB
     // Per TS 33.501 6.9.2.3.4: "derive the KNG-RAN* from the currently active KgNB"
     // This applies regardless of NCC being 0 or >0. For a fixed NCC level, we stay
     // within that level using horizontal derivations.
     RRCLOG_D("NCC values match (%d), using horizontal derivation\n", received_ncc);
     nr_derive_kgnb_horizontal(rrc->phyCellID, rrc->arfcn_ssb, rrc->kgnb);
-  } else if (received_ncc < original_nhcc) {
-    // Note: According to spec, NCC should only increase. If received_ncc < original_nhcc,
-    // this is an error condition, but we handle it gracefully.
-    RRCLOG_W("Received NCC=%d is less than current nhcc=%ld (unexpected per spec, NH chain should only increase)\n",
-             received_ncc,
-             original_nhcc);
   } else {
-    // received_ncc > original_nhcc: synchronize NH chain first (per 33.501 A.10)
-    nr_sync_nh_chain(kamf, rrc->kgnb, rrc->nh, &rrc->nhcc, received_ncc);
-    // Store the received nextHopChainingCount value (per 38.331 5.3.7.5)
+    // received NCC ahead of the current one: synchronize NH chain first (per 33.501 A.10)
     RRCLOG_D("Synchronizing NH chain to target NCC %d\n", received_ncc);
-    rrc->nhcc = received_ncc;
+    nr_sync_nh_chain(kamf, rrc->kgnb, rrc->nh, &rrc->nhcc, rrc->nhcc + steps);
     // After synchronization, derive KNG-RAN* from synchronized NH (vertical derivation)
     // per 33.501 6.9.2.3.4: "When the NCC values match, the UE shall compute the K NG-RAN *
     // from the synchronized NH parameter"
@@ -785,7 +791,12 @@ static void rrc_ue_add_bearer(const int ue_id, const NR_DRB_ToAddMod_t *drb, con
   }
   // add SDAP entity
   nr_sdap_addmod_entity(GNB_FLAG_NO, ue_id, &sdap);
-  // add PDCP entity
+  // add PDCP entity, its discardTimer applies to the RLC entity of the DRB, created before or after it
+  if (drb->pdcp_Config && drb->pdcp_Config->drb && drb->pdcp_Config->drb->discardTimer) {
+    int discard_timer = decode_discard_timer(*drb->pdcp_Config->drb->discardTimer);
+    nr_rlc_set_drb_discard_timer(discard_timer);
+    nr_rlc_update_drb_discard_timer(ue_id, drb->drb_Identity, discard_timer);
+  }
   nr_pdcp_add_drb(GNB_FLAG_NO, ue_id, drb->pdcp_Config, &sdap, sp);
 }
 
@@ -986,8 +997,19 @@ static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
     return;
   }
 
-  // Clear neighbor cell lists from measurement objects during handover
+  // UE configuration of the source PCell, to revert to it upon T304 expiry (5.3.5.8.3)
+  nr_ho_source_t *src = &rrc->ho_source;
+  src->valid = true;
+  src->pci = rrc->phyCellID;
+  src->arfcn_ssb = rrc->arfcn_ssb;
+  src->rnti = rrc->rnti;
+  memcpy(src->kgnb, rrc->kgnb, sizeof(src->kgnb));
+  memcpy(src->nh, rrc->nh, sizeof(src->nh));
+  src->nhcc = rrc->nhcc;
+
   rrcPerNB_t *rrcNB = &rrc->perNB[gNB_index];
+
+  // Clear neighbor cell lists from measurement objects during handover
   for (int i = 0; i < NR_MAX_MEAS_OBJ; i++) {
     if (rrcNB->MeasObj[i] && rrcNB->MeasObj[i]->measObject.present == NR_MeasObjectToAddMod__measObject_PR_measObjectNR) {
       NR_MeasObjectNR_t *measObjNR = rrcNB->MeasObj[i]->measObject.choice.measObjectNR;
@@ -1039,6 +1061,8 @@ static void nr_rrc_process_reconfigurationWithSync(NR_UE_RRC_INST_t *rrc,
     rrc->target_ntncfg = NULL;
     rrc->process_target_ntncfg = false;
   }
+  rrc->target_epoch_ref_hfn = rrc->reconf_rx_valid ? rrc->reconf_rx_hfn : rrc->current_hfn;
+  rrc->target_epoch_ref_frame = rrc->reconf_rx_valid ? rrc->reconf_rx_frame : rrc->current_frame;
   if (reconfigurationWithSync->spCellConfigCommon &&
       reconfigurationWithSync->spCellConfigCommon->ext2 &&
       reconfigurationWithSync->spCellConfigCommon->ext2->ntn_Config_r17) {
@@ -1145,8 +1169,8 @@ static bool nr_rrc_ue_process_masterCellGroup(NR_UE_RRC_INST_t *rrc,
   nr_mac_rrc_config_cg_t *mac_msg = &rrc_msg.payload.config_cg;
   mac_msg->cellGroupConfig = cellGroupConfig;
   mac_msg->UE_NR_Capability = rrc->UECap.UE_NR_Capability;
-  mac_msg->hfn = rrc->current_hfn;
-  mac_msg->frame = rrc->current_frame;
+  mac_msg->hfn = rrc->reconf_rx_valid ? rrc->reconf_rx_hfn : rrc->current_hfn;
+  mac_msg->frame = rrc->reconf_rx_valid ? rrc->reconf_rx_frame : rrc->current_frame;
   nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
   return true;
 }
@@ -1265,9 +1289,9 @@ static void handle_measobj_remove(rrcPerNB_t *rrc, struct NR_MeasObjectToRemoveL
     // for each measObjectId included in the received measObjectToRemoveList
     // that is part of measObjectList in the configuration
     NR_MeasObjectId_t id = *remove_list->list.array[i];
-    if (rrc->MeasObj[id - 1]) {
+    if (rrc->MeasObj[id]) {
       // remove the entry with the matching measObjectId from the measObjectList
-      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, rrc->MeasObj[id - 1]);
+      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, rrc->MeasObj[id]);
       // remove all measId associated with this measObjectId from the measIdList
       for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
         if (rrc->MeasId[j] && rrc->MeasId[j]->measObjectId == id) {
@@ -1640,6 +1664,18 @@ static void handle_measid_addmod(rrcPerNB_t *rrc,
           }
         }
       }
+      // conditional reconfiguration (CHO) execution conditions on neighbour cells: extract neighbor cell info for MAC
+      else if (reportNR->reportType.present == NR_ReportConfigNR__reportType_PR_condTriggerConfig_r16) {
+        int ev = reportNR->reportType.choice.condTriggerConfig_r16->condEventId.present;
+        if ((ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA3
+             || ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA5
+             || ev == NR_CondTriggerConfig_r16__condEventId_PR_condEventA4_r17)
+            && rrc->MeasObj[measObjectId]
+            && rrc->MeasObj[measObjectId]->measObject.present == NR_MeasObjectToAddMod__measObject_PR_measObjectNR) {
+          NR_MeasObjectNR_t *obj_nr = rrc->MeasObj[measObjectId]->measObject.choice.measObjectNR;
+          extract_neighbor_cells_from_measObject(obj_nr, neighbor_cells, num_neighbors, max_neighbors, serving_cell_pci);
+        }
+      }
       // Check for periodical report and extract neighbor cell info for MAC
       else if (reportNR->reportType.present == NR_ReportConfigNR__reportType_PR_periodical) {
         NR_PeriodicalReportConfig_t *periodical_config = reportNR->reportType.choice.periodical;
@@ -1693,6 +1729,62 @@ static void nr_rrc_ue_process_measConfig(rrcPerNB_t *rrc,
       rrc->s_measure = measConfig->s_MeasureConfig->choice.csi_RSRP;
     }
   }
+}
+
+static const NR_ConditionalReconfiguration_r16_t *get_conditional_reconfiguration(const NR_RRCReconfiguration_IEs_t *ie)
+{
+  const NR_RRCReconfiguration_v1530_IEs_t *v1530 = ie->nonCriticalExtension;
+  const NR_RRCReconfiguration_v1540_IEs_t *v1540 = v1530 ? v1530->nonCriticalExtension : NULL;
+  const NR_RRCReconfiguration_v1560_IEs_t *v1560 = v1540 ? v1540->nonCriticalExtension : NULL;
+  const NR_RRCReconfiguration_v1610_IEs_t *v1610 = v1560 ? v1560->nonCriticalExtension : NULL;
+  return v1610 ? v1610->conditionalReconfiguration_r16 : NULL;
+}
+
+/** @brief Remove the measIds and reportConfigs of type condTriggerConfig, and the measObjects associated only
+ * with them (TS 38.331 5.3.5.5.2, 5.3.7.3, 5.3.11) */
+static void nr_rrc_remove_cond_meas_config(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb)
+{
+  bool cond_rc[NR_MAX_MEAS_CONFIG] = {0};
+  for (int i = 0; i < NR_MAX_MEAS_CONFIG; i++) {
+    const NR_ReportConfigToAddMod_t *rc = nb->ReportConfig[i];
+    cond_rc[i] =
+        rc && rc->reportConfig.present == NR_ReportConfigToAddMod__reportConfig_PR_reportConfigNR
+        && rc->reportConfig.choice.reportConfigNR->reportType.present == NR_ReportConfigNR__reportType_PR_condTriggerConfig_r16;
+  }
+  bool cond_obj[NR_MAX_MEAS_OBJ] = {0};
+  bool other_obj[NR_MAX_MEAS_OBJ] = {0};
+  for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+    const NR_MeasIdToAddMod_t *m = nb->MeasId[j];
+    if (m && cond_rc[m->reportConfigId])
+      cond_obj[m->measObjectId] = true;
+    else if (m)
+      other_obj[m->measObjectId] = true;
+  }
+  for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+    if (nb->MeasId[j] && cond_rc[nb->MeasId[j]->reportConfigId]) {
+      asn1cFreeStruc(asn_DEF_NR_MeasIdToAddMod, nb->MeasId[j]);
+      handle_meas_reporting_remove(nb, j, &rrc->timers_and_constants);
+    }
+  }
+  for (int i = 0; i < NR_MAX_MEAS_CONFIG; i++) {
+    if (cond_rc[i])
+      asn1cFreeStruc(asn_DEF_NR_ReportConfigToAddMod, nb->ReportConfig[i]);
+  }
+  for (int i = 0; i < NR_MAX_MEAS_OBJ; i++) {
+    if (cond_obj[i] && !other_obj[i])
+      asn1cFreeStruc(asn_DEF_NR_MeasObjectToAddMod, nb->MeasObj[i]);
+  }
+}
+
+/** @brief Remove all the entries within VarConditionalReconfig, and the measurement configuration of
+ * their execution conditions */
+static void nr_rrc_cho_release_all(NR_UE_RRC_INST_t *rrc, rrcPerNB_t *nb)
+{
+  if (!nr_rrc_cho_configured(rrc))
+    return;
+  RRCLOG_I("CHO: release all candidate cells\n");
+  nr_rrc_cho_release(rrc);
+  nr_rrc_remove_cond_meas_config(rrc, nb);
 }
 
 static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_index, NR_RRCReconfiguration_t *reconfiguration)
@@ -1755,6 +1847,17 @@ static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_
       }
       if (ie->measConfig) {
         RRCLOG_I("RRCReconfiguration includes Measurement Configuration\n");
+        // a modified measId of a CHO execution condition is no longer fulfilled (5.3.5.13.4)
+        // (before processing: the measConfig entries are moved into the UE configuration)
+        const NR_MeasConfig_t *mc = ie->measConfig;
+        for (int i = 0; mc->measIdToAddModList && i < mc->measIdToAddModList->list.count; i++)
+          nr_rrc_cho_meas_id_modified(rrc, mc->measIdToAddModList->list.array[i]->measId);
+        for (int i = 0; mc->reportConfigToAddModList && i < mc->reportConfigToAddModList->list.count; i++) {
+          for (int j = 0; j < NR_MAX_MEAS_ID; j++) {
+            if (rrcNB->MeasId[j] && rrcNB->MeasId[j]->reportConfigId == mc->reportConfigToAddModList->list.array[i]->reportConfigId)
+              nr_rrc_cho_meas_id_modified(rrc, j);
+          }
+        }
         nr_neighbor_cell_info_t neighbor_cells[NUMBER_OF_NEIGHBORING_CELLS_MAX];
         int num_neighbors = 0;
         nr_rrc_ue_process_measConfig(rrcNB, ie->measConfig, &rrc->timers_and_constants, neighbor_cells, &num_neighbors, NUMBER_OF_NEIGHBORING_CELLS_MAX, rrc->phyCellID);
@@ -1762,6 +1865,9 @@ static void nr_rrc_ue_process_rrcReconfiguration(NR_UE_RRC_INST_t *rrc, int gNB_
           nr_rrc_mac_config_req_meas(rrc->ue_id, neighbor_cells, num_neighbors);
         }
       }
+      const NR_ConditionalReconfiguration_r16_t *cond_reconfig = get_conditional_reconfiguration(ie);
+      if (cond_reconfig)
+        nr_rrc_cho_configure(rrc, cond_reconfig);
       if (ie->lateNonCriticalExtension) {
         RRCLOG_E("RRCReconfiguration includes lateNonCriticalExtension. Not handled.\n");
       }
@@ -2034,6 +2140,35 @@ static int check_si_status(NR_UE_RRC_SI_INFO *SI_info)
   return 0;
 }
 
+/** @brief Drop the stored system information (all of it but SIB1 if keep_sib1) */
+static void nr_rrc_invalidate_SI(NR_UE_RRC_SI_INFO *SI_info, bool keep_sib1)
+{
+  init_SI_timers(SI_info);
+  SI_info->sib_pending = false;
+  if (!keep_sib1)
+    SI_info->sib1_validity = false;
+  SI_info->sib2_validity = false;
+  SI_info->sib3_validity = false;
+  SI_info->sib4_validity = false;
+  SI_info->sib5_validity = false;
+  SI_info->sib6_validity = false;
+  SI_info->sib7_validity = false;
+  SI_info->sib8_validity = false;
+  SI_info->sib9_validity = false;
+  SI_info->sib10_validity = false;
+  SI_info->sib11_validity = false;
+  SI_info->sib12_validity = false;
+  SI_info->sib13_validity = false;
+  SI_info->sib14_validity = false;
+  SI_info->SInfo_r17.sib15_validity = false;
+  SI_info->SInfo_r17.sib16_validity = false;
+  SI_info->SInfo_r17.sib17_validity = false;
+  SI_info->SInfo_r17.sib18_validity = false;
+  SI_info->SInfo_r17.sib19_validity = false;
+  SI_info->SInfo_r17.sib20_validity = false;
+  SI_info->SInfo_r17.sib21_validity = false;
+}
+
 /*brief decode BCCH-BCH (MIB) message*/
 static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
                                                  const uint8_t gNB_index,
@@ -2042,6 +2177,12 @@ static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
                                                  uint8_t *const bufferP,
                                                  const uint8_t buffer_len)
 {
+  // handover: a MIB of the source cell still in the PHY pipeline must not be taken for the target cell's,
+  // else the MAC starts the RA on the source timing and SSB
+  if (nr_timer_is_active(&rrc->timers_and_constants.T304) && phycellid != rrc->phyCellID) {
+    RRCLOG_W("MIB of PCI %u ignored during handover to PCI %d\n", phycellid, rrc->phyCellID);
+    return;
+  }
   // MIB received on the target cell. Now process target ntncfg once new timing is received.
   if (phycellid == rrc->phyCellID && rrc->target_ntncfg) {
     rrc->process_target_ntncfg = true;
@@ -2072,6 +2213,8 @@ static void nr_rrc_ue_decode_NR_BCCH_BCH_Message(NR_UE_RRC_INST_t *rrc,
   if (nr_timer_is_active(&timers->T311)) {
     nr_timer_stop(&timers->T311);
     rrc->ra_trigger = RRC_CONNECTION_REESTABLISHMENT;
+    // the selected cell may not be the last serving one: acquire its SIB1 (and SIB19) before the RA (5.2.2.1)
+    nr_rrc_invalidate_SI(&rrc->perNB[gNB_index].SInfo, false);
 
     // apply the default MAC Cell Group configuration
     // (done at MAC by calling nr_ue_mac_default_configs)
@@ -3012,7 +3155,7 @@ void nr_ue_meas_filtering(rrcPerNB_t *rrc, meas_t *meas_cell, uint16_t Nid_cell,
     apply_ema(&meas_cell->ss_rsrp_dBm, l3_measurements->ssb_filter_coeff_rsrp, rsrp_dBm);
 }
 
-static int get_rsrp_value(const meas_t *cell)
+int nr_rrc_get_l3_rsrp(const meas_t *cell)
 {
   if (cell->ss_rsrp_dBm.init)
     return cell->ss_rsrp_dBm.val;
@@ -3080,7 +3223,7 @@ static void handle_event_a2(l3_measurements_t *l3_measurements,
     return;
   meas_report_params_t *params = &l3_measurements->meas_report[meas_id];
   meas_t *serving_cell = &l3_measurements->serving_cell;
-  int serving_cell_rsrp = get_rsrp_value(serving_cell);
+  int serving_cell_rsrp = nr_rrc_get_l3_rsrp(serving_cell);
   if (serving_cell_rsrp == INT_MAX) {
     LOG_E(NR_RRC, "There are no RSRP measurements taken for the active cell\n");
   }
@@ -3127,7 +3270,7 @@ static void handle_event_a3(l3_measurements_t *l3_measurements,
   meas_report_params_t *params = &l3_measurements->meas_report[meas_id];
   meas_t *serving_cell = &l3_measurements->serving_cell;
 
-  int serving_cell_rsrp = get_rsrp_value(serving_cell);
+  int serving_cell_rsrp = nr_rrc_get_l3_rsrp(serving_cell);
   if (serving_cell_rsrp == INT_MAX) {
     LOG_D(NR_RRC, "There are no RSRP measurements taken for the serving cell\n");
     return;
@@ -3143,7 +3286,7 @@ static void handle_event_a3(l3_measurements_t *l3_measurements,
 
   for (int i = 0; i < NUMBER_OF_NEIGHBORING_CELLS_MAX; i++) {
     meas_t *neighboring_cell = &l3_measurements->neighboring_cell[i];
-    int neighboring_cell_rsrp = get_rsrp_value(neighboring_cell);
+    int neighboring_cell_rsrp = nr_rrc_get_l3_rsrp(neighboring_cell);
 
     if (neighboring_cell_rsrp == INT_MAX) {
       LOG_D(NR_RRC, "There are no RSRP measurements taken for the neighboring cell %d\n", i);
@@ -3234,6 +3377,10 @@ static void nr_rrc_handle_ra_indication(NR_UE_RRC_INST_t *rrc, bool ra_succeeded
     // procedures described in 5.3.5.3 of 38.331 when
     // reconfigurationWithSync is included in spCellConfig
     nr_timer_stop(&timers->T304);
+    rrc->ho_source.valid = false;
+    // remove the conditional reconfigurations and their measurement configuration, kept until now for a
+    // recovery (attemptCondReconfig) after a failure of this reconfiguration with sync
+    nr_rrc_cho_release_all(rrc, &rrc->perNB[gNB_index]);
 
     // TODO apply the parts of the CQI reporting configuration,
     // the scheduling request configuration and the sounding RS
@@ -3565,8 +3712,58 @@ void nr_rrc_ue_process_sidelink_radioResourceConfig(NR_SetupRelease_SL_ConfigDed
   }
 }
 
+static void nr_rrc_suspend_rbs(NR_UE_RRC_INST_t *rrc)
+{
+  // suspend all RBs, except SRB0
+  for (int i = 1; i < 4; i++) {
+    if (rrc->Srb[i] == RB_ESTABLISHED) {
+      rrc->Srb[i] = RB_SUSPENDED;
+    }
+  }
+  for (int i = 1; i <= MAX_DRBS_PER_UE; i++) {
+    if (get_DRB_status(rrc, i) == RB_ESTABLISHED) {
+      set_DRB_status(rrc, i, RB_SUSPENDED);
+    }
+  }
+}
+
+/** @brief Cell selection of the re-establishment: the cell of conditional reconfiguration candidate idx, with
+ * the satellite of its stored ntn-Config, or any cell (idx -1) */
+static void nr_rrc_cell_search(NR_UE_RRC_INST_t *rrc, int idx)
+{
+  rrc->cond_reconfig.search_idx = idx;
+  nr_mac_rrc_message_t rrc_msg = {0};
+  rrc_msg.payload_type = NR_MAC_RRC_CELL_SEARCH;
+  nr_mac_rrc_cell_search_t *cs = &rrc_msg.payload.cell_search;
+  cs->pci = -1;
+  if (idx >= 0) {
+    const nr_cond_reconfig_t *c = &rrc->cond_reconfig.cand[idx];
+    RRCLOG_I("CHO: cell selection, search of the cell of candidate %ld, PCI %d\n", c->id, c->pci);
+    cs->pci = c->pci;
+    cs->ntn_config = nr_rrc_cho_get_ntn_config(c);
+    cs->hfn = c->rx_hfn;
+    cs->frame = c->rx_frame;
+  }
+  nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
+}
+
+/* next candidate with an applicable cell after idx, -1 if none */
+static int next_search_candidate(const nr_var_cond_reconfig_t *var, int idx)
+{
+  for (int i = idx + 1; i < NR_maxNrofCondCells_r16; i++) {
+    if (var->cand[i].id && var->cand[i].pci >= 0)
+      return i;
+  }
+  return -1;
+}
+
 static void nr_rrc_initiate_rrcReestablishment(NR_UE_RRC_INST_t *rrc, NR_ReestablishmentCause_t cause)
 {
+  // attemptCondReconfig: the conditional reconfigurations are kept for the first cell selection (5.3.7.3)
+  nr_var_cond_reconfig_t *var = &rrc->cond_reconfig;
+  var->recovery = var->attempt_cond_reconfig && nr_rrc_cho_configured(rrc);
+  if (!var->recovery)
+    nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
   rrc->reestablishment_cause = cause;
   rrc->reestab_source_pci = rrc->phyCellID;
   rrc->reestab_source_crnti = rrc->rnti;
@@ -3583,17 +3780,9 @@ static void nr_rrc_initiate_rrcReestablishment(NR_UE_RRC_INST_t *rrc, NR_Reestab
   nr_timer_stop(&timers->T304);
   // start timer T311
   nr_timer_start(&timers->T311);
-  // suspend all RBs, except SRB0
-  for (int i = 1; i < 4; i++) {
-    if (rrc->Srb[i] == RB_ESTABLISHED) {
-      rrc->Srb[i] = RB_SUSPENDED;
-    }
-  }
-  for (int i = 1; i <= MAX_DRBS_PER_UE; i++) {
-    if (get_DRB_status(rrc, i) == RB_ESTABLISHED) {
-      set_DRB_status(rrc, i, RB_SUSPENDED);
-    }
-  }
+  // with attemptCondReconfig, if the selected cell is not a candidate (5.3.7.3)
+  if (!var->recovery)
+    nr_rrc_suspend_rbs(rrc);
 
   // Free Target NTNcfg is stored
   if (rrc->target_ntncfg) {
@@ -3605,10 +3794,30 @@ static void nr_rrc_initiate_rrcReestablishment(NR_UE_RRC_INST_t *rrc, NR_Reestab
   // release the MCG SCell(s), if configured
   // no SCell configured in our implementation
 
-  // reset MAC
+  // reset MAC (also with attemptCondReconfig: the transmissions in the failed cell stop for the cell selection)
   // release spCellConfig, if configured
-  // perform cell selection in accordance with the cell selection process
   nr_rrc_trigger_mac_ra(rrc, NR_MAC_RA_START_REESTABLISHMENT);
+  // perform cell selection in accordance with the cell selection process, the cells of the candidates first
+  nr_rrc_cell_search(rrc, var->recovery ? next_search_candidate(var, -1) : -1);
+}
+
+/** @brief Actions following cell selection while T311 is running (5.3.7.3), once the essential SI of the
+ * selected cell is acquired: with attemptCondReconfig, the conditional reconfiguration of the cell if it is a
+ * candidate, else the actions of the initiation postponed for it (5.3.7.2)
+ * @return index of the candidate whose condRRCReconfig is to be applied, -1 for the RRCReestablishmentRequest */
+static int nr_rrc_cell_selected_after_failure(NR_UE_RRC_INST_t *rrc)
+{
+  nr_var_cond_reconfig_t *var = &rrc->cond_reconfig;
+  if (!var->recovery || nr_timer_is_active(&rrc->timers_and_constants.T311))
+    return -1;
+  var->recovery = false;
+  const int idx = nr_rrc_cho_recovery_candidate(rrc, 0, rrc->phyCellID);
+  if (idx >= 0)
+    return idx;
+  RRCLOG_I("CHO: selected cell PCI %d is not a candidate, re-establishment\n", rrc->phyCellID);
+  nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
+  nr_rrc_suspend_rbs(rrc);
+  return -1;
 }
 
 void handle_RRCRelease(NR_UE_RRC_INST_t *rrc)
@@ -3651,6 +3860,117 @@ void handle_RRCRelease(NR_UE_RRC_INST_t *rrc)
   asn1cFreeStruc(asn_DEF_NR_RRCRelease, rrc->RRCRelease);
 }
 
+/** @brief T304 expiry, reconfiguration with sync failure of the MCG (TS 38.331 5.3.5.8.3): revert back to the
+ * UE configuration used in the source PCell (cell, C-RNTI and keys, for the re-establishment request), then
+ * initiate the connection re-establishment */
+void handle_t304_expiry(NR_UE_RRC_INST_t *rrc)
+{
+  nr_ho_source_t *src = &rrc->ho_source;
+  RRCLOG_W("Reconfiguration with sync failure (T304 expiry) towards PCI %d, re-establishment from source PCI %d\n",
+           rrc->phyCellID,
+           src->valid ? src->pci : -1);
+  if (src->valid) {
+    rrc->phyCellID = src->pci;
+    rrc->arfcn_ssb = src->arfcn_ssb;
+    rrc->rnti = src->rnti;
+    memcpy(rrc->kgnb, src->kgnb, sizeof(rrc->kgnb));
+    memcpy(rrc->nh, src->nh, sizeof(rrc->nh));
+    rrc->nhcc = src->nhcc;
+    src->valid = false;
+  }
+  nr_rrc_initiate_rrcReestablishment(rrc, NR_ReestablishmentCause_handoverFailure);
+}
+
+/** @brief Execution of the conditional reconfiguration of candidate idx (5.3.5.13.5): apply its condRRCReconfig,
+ * also upon cell selection after a failure (recovery, 5.3.7.3) */
+static void nr_rrc_cho_execute(NR_UE_RRC_INST_t *rrc, int idx, bool recovery)
+{
+  const nr_cond_reconfig_t *c = &rrc->cond_reconfig.cand[idx];
+  RRCLOG_A("CHO: execute candidate %ld, PCI %d%s (condRRCReconfig received at %d.%d, now %d.%d HFN.frame)\n",
+           c->id,
+           c->pci,
+           recovery ? " after a failure" : "",
+           c->rx_hfn,
+           c->rx_frame,
+           rrc->current_hfn,
+           rrc->current_frame);
+  NR_RRCReconfiguration_t *rec = NULL;
+  asn_dec_rval_t dec =
+      uper_decode_complete(NULL, &asn_DEF_NR_RRCReconfiguration, (void **)&rec, c->rrc_reconfig.buf, c->rrc_reconfig.len);
+  AssertFatal(dec.code == RC_OK, "condRRCReconfig of candidate %ld decoded at its reception\n", c->id);
+  rrc->reconf_rx_valid = true;
+  rrc->reconf_rx_hfn = c->rx_hfn;
+  rrc->reconf_rx_frame = c->rx_frame;
+  if (recovery) {
+    // 5.3.5.3: remove VarConditionalReconfig (rec is a copy)
+    nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
+    // the source of this reconfiguration with sync is the cell where the failure occurred
+    rrc->phyCellID = rrc->reestab_source_pci;
+    // the RBs, not suspended by RRC (5.3.7.2), were at the MAC reset
+    for (int i = 1; i < 4; i++) {
+      if (rrc->Srb[i] == RB_ESTABLISHED) {
+        nr_mac_rrc_message_t rrc_msg = {.payload_type = NR_MAC_RRC_RESUME_RB};
+        rrc_msg.payload.resume_rb.is_srb = true;
+        rrc_msg.payload.resume_rb.rb_id = i;
+        nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
+      }
+    }
+    for (int i = 1; i <= MAX_DRBS_PER_UE; i++) {
+      if (get_DRB_status(rrc, i) == RB_ESTABLISHED) {
+        nr_mac_rrc_message_t rrc_msg = {.payload_type = NR_MAC_RRC_RESUME_RB};
+        rrc_msg.payload.resume_rb.is_srb = false;
+        rrc_msg.payload.resume_rb.rb_id = i;
+        nr_rrc_send_msg_to_mac(rrc, &rrc_msg);
+      }
+    }
+  }
+  nr_rrc_ue_process_rrcReconfiguration(rrc, 0, rec);
+  rrc->reconf_rx_valid = false;
+  nr_rrc_ue_generate_RRCReconfigurationComplete(rrc, 1, rec->rrc_TransactionIdentifier);
+  ASN_STRUCT_FREE(asn_DEF_NR_RRCReconfiguration, rec);
+}
+
+/** @brief Cell selection after a failure with attemptCondReconfig: the cell of each candidate is searched for an
+ * equal share of T311, then any cell */
+static void nr_rrc_cho_search_tick(NR_UE_RRC_INST_t *rrc)
+{
+  nr_var_cond_reconfig_t *var = &rrc->cond_reconfig;
+  if (!var->recovery || var->search_idx < 0)
+    return;
+  int n = 0;
+  int pos = 0;
+  for (int i = next_search_candidate(var, -1); i >= 0; i = next_search_candidate(var, i)) {
+    if (i < var->search_idx)
+      pos++;
+    n++;
+  }
+  const NR_timer_t *t311 = &rrc->timers_and_constants.T311;
+  const uint32_t share = (nr_timer_elapsed_time(t311) + nr_timer_remaining_time(t311)) / (n + 1);
+  if (nr_timer_elapsed_time(t311) < share * (pos + 1))
+    return;
+  const int next = next_search_candidate(var, var->search_idx);
+  if (next < 0)
+    RRCLOG_I("CHO: cell selection, no candidate cell found, search of any cell\n");
+  nr_rrc_cell_search(rrc, next);
+}
+
+/** @brief Conditional reconfiguration evaluation every step_ms while connected and no reconfiguration
+ * with sync is ongoing, and execution of the selected cell (5.3.5.13.5) */
+void nr_rrc_cho_tick(NR_UE_RRC_INST_t *rrc, int step_ms)
+{
+  if (rrc->nrRrcState != RRC_STATE_CONNECTED_NR)
+    return;
+  if (nr_timer_is_active(&rrc->timers_and_constants.T311)) {
+    nr_rrc_cho_search_tick(rrc);
+    return;
+  }
+  if (nr_timer_is_active(&rrc->timers_and_constants.T304) || !nr_rrc_cho_configured(rrc))
+    return;
+  const int sel = nr_rrc_cho_evaluate(rrc, 0, step_ms);
+  if (sel >= 0)
+    nr_rrc_cho_execute(rrc, sel, false);
+}
+
 void handle_rlf_detection(NR_UE_RRC_INST_t *rrc)
 {
   // 5.3.10.3 in 38.331
@@ -3677,6 +3997,10 @@ void nr_rrc_going_to_IDLE(NR_UE_RRC_INST_t *rrc,
 {
   NR_UE_Timers_Constants_t *tac = &rrc->timers_and_constants;
   struct NR_RRCRelease_IEs *rrcReleaseIEs = RRCRelease ? RRCRelease->criticalExtensions.choice.rrcRelease : NULL;
+
+  // remove all the entries within VarConditionalReconfig (5.3.11)
+  nr_rrc_cho_release_all(rrc, &rrc->perNB[0]);
+  rrc->ho_source.valid = false;
 
   // if going to RRC_IDLE was triggered by reception
   // of the RRCRelease message including a waitTime
@@ -3774,34 +4098,8 @@ void nr_rrc_going_to_IDLE(NR_UE_RRC_INST_t *rrc,
    * With a normal no-redirection RRCRelease, preserve the already-acquired camped-cell context for paging. */
   const bool preserve_camped_context = rrc->nrRrcState != RRC_STATE_DETACH_NR && release_cause == OTHER && RRCRelease
                                        && (!rrcReleaseIEs || !rrcReleaseIEs->redirectedCarrierInfo);
-  for (int i = 0; i < NB_CNX_UE; i++) {
-    rrcPerNB_t *nb = &rrc->perNB[i];
-    NR_UE_RRC_SI_INFO *SI_info = &nb->SInfo;
-    init_SI_timers(SI_info);
-    SI_info->sib_pending = false;
-    if (!preserve_camped_context)
-      SI_info->sib1_validity = false;
-    SI_info->sib2_validity = false;
-    SI_info->sib3_validity = false;
-    SI_info->sib4_validity = false;
-    SI_info->sib5_validity = false;
-    SI_info->sib6_validity = false;
-    SI_info->sib7_validity = false;
-    SI_info->sib8_validity = false;
-    SI_info->sib9_validity = false;
-    SI_info->sib10_validity = false;
-    SI_info->sib11_validity = false;
-    SI_info->sib12_validity = false;
-    SI_info->sib13_validity = false;
-    SI_info->sib14_validity = false;
-    SI_info->SInfo_r17.sib15_validity = false;
-    SI_info->SInfo_r17.sib16_validity = false;
-    SI_info->SInfo_r17.sib17_validity = false;
-    SI_info->SInfo_r17.sib18_validity = false;
-    SI_info->SInfo_r17.sib19_validity = false;
-    SI_info->SInfo_r17.sib20_validity = false;
-    SI_info->SInfo_r17.sib21_validity = false;
-  }
+  for (int i = 0; i < NB_CNX_UE; i++)
+    nr_rrc_invalidate_SI(&rrc->perNB[i].SInfo, preserve_camped_context);
 
   if (rrc->nrRrcState == RRC_STATE_DETACH_NR) {
     asn1cFreeStruc(asn_DEF_NR_UE_NR_Capability, rrc->UECap.UE_NR_Capability);

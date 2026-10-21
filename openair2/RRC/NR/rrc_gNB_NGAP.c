@@ -92,13 +92,12 @@ static const uint16_t NGAP_INTEGRITY_NIA3_MASK = 0x2000;
 
 #define INTEGRITY_ALGORITHM_NONE NR_IntegrityProtAlgorithm_nia0
 
-static void set_UE_security_algos(const gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, const ngap_security_capabilities_t *cap);
 
 /** @brief Validates PLMN against allowed PLMN list and returns pointer to matching PLMN
  * @param rrc RRC instance
  * @param plmn PLMN to validate
  * @return pointer to matching PLMN in configuration, or NULL if not found */
-static const plmn_id_t *get_serving_plmn(gNB_RRC_INST *rrc, const plmn_id_t *plmn)
+const plmn_id_t *get_serving_plmn(gNB_RRC_INST *rrc, const plmn_id_t *plmn)
 {
   // Find matching PLMN in configuration
   for (int idx = 0; idx < rrc->configuration.num_plmn; idx++) {
@@ -730,7 +729,7 @@ static e_NR_IntegrityProtAlgorithm rrc_gNB_select_integrity(const gNB_RRC_INST *
  * \param UE      UE context
  * \param cap     security capabilities for this UE
  */
-static void set_UE_security_algos(const gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, const ngap_security_capabilities_t *cap)
+void set_UE_security_algos(const gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE, const ngap_security_capabilities_t *cap)
 {
   /* Save security parameters */
   UE->security_capabilities = *cap;

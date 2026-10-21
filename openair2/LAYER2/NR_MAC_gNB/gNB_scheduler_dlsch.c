@@ -306,7 +306,9 @@ static uint32_t update_dlsch_buffer(frame_t frame, slot_t slot, NR_UE_info_t *UE
   /* loop over all activated logical channels */
   FOR_EACH_SEQ_ARR(const nr_lc_config_t *, c, &sched_ctrl->lc_config ) {
     logical_chan_id_t lcid = c->lcid;
-    if (c->suspended || (lcid == DL_SCH_LCID_DTCH && nr_timer_is_active(&sched_ctrl->transm_interrupt))) {
+    // no DL data after a transmission stop (TransmissionActionIndicator), only the signalling still in flight
+    bool stopped = nr_timer_is_active(&sched_ctrl->transm_interrupt) || nr_timer_is_active(&sched_ctrl->transm_timeout);
+    if (c->suspended || (lcid == DL_SCH_LCID_DTCH && stopped)) {
       memset(&sched_ctrl->rlc_status[lcid], 0, sizeof(sched_ctrl->rlc_status[lcid]));
       continue;
     }

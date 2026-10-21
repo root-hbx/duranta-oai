@@ -194,13 +194,9 @@ void nr_rrc_handle_timers(NR_UE_RRC_INST_t *rrc)
   }
 
   bool t304_expired = nr_timer_tick(&timers->T304);
-  if(t304_expired) {
+  if (t304_expired) {
     RRCLOG_W("Timer T304 expired\n");
-    // TODO
-    // For T304 of MCG, in case of the handover from NR or intra-NR
-    // handover, initiate the RRC re-establishment procedure;
-    // In case of handover to NR, perform the actions defined in the
-    // specifications applicable for the source RAT.
+    handle_t304_expiry(rrc);
   }
 
   bool t310_expired = nr_timer_tick(&timers->T310);
@@ -228,6 +224,7 @@ void nr_rrc_handle_timers(NR_UE_RRC_INST_t *rrc)
   }
 
   handle_meas_timers(rrc);
+  nr_rrc_cho_tick(rrc, 10);
 }
 
 int nr_rrc_get_T304(long t304)

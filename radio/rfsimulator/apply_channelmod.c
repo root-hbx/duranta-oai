@@ -3,6 +3,7 @@
  */
 
 #include <complex.h>
+#include <pthread.h>
 #include <common/utils/LOG/log.h>
 #include <openair1/SIMULATION/TOOLS/sim.h>
 #include "openair2/LAYER2/NR_MAC_gNB/mac_config.h"
@@ -79,6 +80,132 @@ static void trace_link_dynamics(channel_desc_t *cd, double t, const double pos_g
   *acc = fmax((d10 - d0) / 50 - (d5 - d0) / 25, 0);
 }
 
+// Common TA prediction for the gNB MAC (dedicated ntn-Config of time-based CHO candidates): the trace of the uplink
+// link that updates SIB19, and the epoch of its last SIB19 update
+static struct {
+  pthread_mutex_t mutex;
+  sat_trace_sample_t *trace;
+  int len;
+  double utc_ms;
+  double pos_gnb[3];
+  bool transparent;
+  gnb_sat_position_update_t epoch;
+  double t_epoch;
+} ta_pred = {.mutex = PTHREAD_MUTEX_INITIALIZER};
+
+// Satellite position at time t (s) of the trace, linear interpolation, false outside of the trace
+static bool trace_position(const sat_trace_sample_t *tr, int n, double t, double pos[3])
+{
+  if (n < 2 || t < tr[0].t || t > tr[n - 1].t)
+    return false;
+  int lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const int mid = (lo + hi) / 2;
+    if (tr[mid].t <= t)
+      lo = mid;
+    else
+      hi = mid;
+  }
+  const double frac = (t - tr[lo].t) / (tr[hi].t - tr[lo].t);
+  for (int k = 0; k < 3; k++)
+    pos[k] = tr[lo].pos[k] + frac * (tr[hi].pos[k] - tr[lo].pos[k]);
+  return true;
+}
+
+// nr_ntn_ta_predictor_t: ta-Common (feeder link round trip) y(x) = d0 + drift * x + variant * x^2, x the time since the
+// epoch, exact at the Chebyshev nodes of the window (smallest maximum error). Within the TA-Info ranges of 38.331:
+// variant >= 0, else a line; drift clamped, then exact at the outer nodes.
+static bool predict_ta_common(uint64_t utc_start_ms,
+                              uint64_t utc_end_ms,
+                              gnb_sat_position_update_t *out,
+                              uint64_t *epoch_utc_ms,
+                              int *max_err_ns)
+{
+  pthread_mutex_lock(&ta_pred.mutex);
+  *out = ta_pred.epoch;
+  const double t_epoch = ta_pred.t_epoch;
+  pthread_mutex_unlock(&ta_pred.mutex);
+  *epoch_utc_ms = ta_pred.utc_ms + t_epoch * 1000;
+  *max_err_ns = 0;
+  if (!ta_pred.transparent)
+    return true;
+
+  const double t_start = (utc_start_ms - ta_pred.utc_ms) / 1000;
+  const double t_end = (utc_end_ms - ta_pred.utc_ms) / 1000;
+  const double t_mid = (t_start + t_end) / 2;
+  const double half = (t_end - t_start) / 2 * cos(M_PI / 6);
+  const double t_node[3] = {t_mid - half, t_mid, t_mid + half};
+  double x[3], y[3];
+  for (int i = 0; i < 3; i++) {
+    double pos_sat[3];
+    if (!trace_position(ta_pred.trace, ta_pred.len, t_node[i], pos_sat))
+      return false;
+    x[i] = t_node[i] - t_epoch;
+    y[i] = 2 * vec_dist(ta_pred.pos_gnb, pos_sat) / SPEED_OF_LIGHT;
+  }
+  const double drift_max = 257303 * 0.2e-9;
+  const double slope01 = (y[1] - y[0]) / (x[1] - x[0]);
+  const double slope12 = (y[2] - y[1]) / (x[2] - x[1]);
+  double variant = (slope12 - slope01) / (x[2] - x[0]);
+  double drift = slope01 - variant * (x[0] + x[1]);
+  if (variant < 0) {
+    variant = 0;
+    drift = (y[2] - y[0]) / (x[2] - x[0]);
+  }
+  if (fabs(drift) > drift_max) {
+    drift = copysign(drift_max, drift);
+    variant = (y[2] - y[0] - drift * (x[2] - x[0])) / (x[2] * x[2] - x[0] * x[0]);
+  }
+  const double d0 = y[0] - drift * x[0] - variant * x[0] * x[0];
+
+  // SIB19 units and ranges (38.331 TA-Info)
+  const long ta_common = lround(d0 / 4.072e-9);
+  const long ta_drift = lround(drift / 0.2e-9);
+  const long ta_variant = lround(variant / 0.2e-10);
+  if (ta_common < 0 || ta_common > 66485757 || labs(ta_drift) > 257303 || ta_variant < 0 || ta_variant > 28949)
+    return false;
+  out->delay = ta_common;
+  out->drift = ta_drift;
+  out->accel = ta_variant;
+
+  // error of what the UE computes from the SIB19 values
+  const double d0_q = ta_common * 4.072e-9;
+  const double drift_q = ta_drift * 0.2e-9;
+  const double variant_q = ta_variant * 0.2e-10;
+  double max_err = 0;
+  for (double t = t_start; t <= t_end; t += 0.5) {
+    double pos_sat[3];
+    trace_position(ta_pred.trace, ta_pred.len, t, pos_sat);
+    const double xt = t - t_epoch;
+    const double err = d0_q + drift_q * xt + variant_q * xt * xt - 2 * vec_dist(ta_pred.pos_gnb, pos_sat) / SPEED_OF_LIGHT;
+    max_err = fmax(max_err, fabs(err));
+  }
+  *max_err_ns = ceil(max_err * 1e9);
+  LOG_I(HW, "Common TA prediction for %.1f-%.1f s (trace time): max error %.3f us\n", t_start, t_end, max_err * 1e6);
+  return true;
+}
+
+static void update_ta_prediction(const channel_desc_t *cd, bool transparent, const gnb_sat_position_update_t *epoch, double t_epoch)
+{
+  if (cd->sat_trace_utc_ms == 0)
+    return;
+  pthread_mutex_lock(&ta_pred.mutex);
+  const bool first = ta_pred.trace == NULL;
+  if (first) {
+    ta_pred.trace = malloc_or_fail(cd->sat_trace_len * sizeof(*ta_pred.trace));
+    memcpy(ta_pred.trace, cd->sat_trace, cd->sat_trace_len * sizeof(*ta_pred.trace));
+    ta_pred.len = cd->sat_trace_len;
+    ta_pred.utc_ms = cd->sat_trace_utc_ms;
+    memcpy(ta_pred.pos_gnb, cd->pos_gnb, sizeof(ta_pred.pos_gnb));
+    ta_pred.transparent = transparent;
+  }
+  ta_pred.epoch = *epoch;
+  ta_pred.t_epoch = t_epoch;
+  pthread_mutex_unlock(&ta_pred.mutex);
+  if (first)
+    nr_register_ntn_ta_predictor(predict_ta_common);
+}
+
 // LEO satellite channel driven by an orbit trace (satellite ECEF position/velocity over time).
 // Service link: UE <-> SAT. Feeder link: SAT <-> gNB at pos_gnb (SAT_LEO_TRANS only).
 // - Delay, which the UE compensates in its TA (38.300 16.14.2.2):
@@ -89,7 +216,10 @@ static void trace_link_dynamics(channel_desc_t *cd, double t, const double pos_g
 //     as in the built-in circular orbit model.
 static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSamples, uint64_t TS)
 {
-  const double t = (TS > channelDesc->start_TS ? TS - channelDesc->start_TS : 0) / channelDesc->sampling_rate;
+  uint64_t start_TS = channelDesc->start_TS;
+  if (channelDesc->sat_trace_common_clock)
+    start_TS = 0;
+  const double t = (TS > start_TS ? TS - start_TS : 0) / channelDesc->sampling_rate;
   double pos_sat[3], vel_sat[3];
   interp_sat_trace(channelDesc, t, pos_sat, vel_sat);
 
@@ -141,12 +271,14 @@ static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSa
 
   const int samples_per_subframe = channelDesc->sampling_rate / 1000;
   const int abs_subframe = TS / samples_per_subframe;
-  if (abs_subframe % 10 == 0) { // update SIB19 information for the next frame
+  if (abs_subframe % 10 == 0) { // update SIB19 information for the next frame, its epoch
+    const double t_epoch = t + ((abs_subframe / 10 + 1) * 10.0 * samples_per_subframe - TS) / channelDesc->sampling_rate;
+    interp_sat_trace(channelDesc, t_epoch, pos_sat, vel_sat);
     // ta-Common covers the feeder link only; for SAT_LEO_REGEN there is none, the UE computes the
     // service link delay itself from the ephemeris
     double dist_sib19 = 0, vel_sib19 = 0, acc_sib19 = 0;
     if (transparent)
-      trace_link_dynamics(channelDesc, t, pos_gnb, &dist_sib19, &vel_sib19, &acc_sib19);
+      trace_link_dynamics(channelDesc, t_epoch, pos_gnb, &dist_sib19, &vel_sib19, &acc_sib19);
     gnb_sat_position_update_t sat_position = {
         .sfn = (abs_subframe / 10 + 1) % 1024,
         .subframe = 0,
@@ -161,6 +293,7 @@ static void update_sat_trace_channel_model(channel_desc_t *channelDesc, int nbSa
         .velocity.Z = vel_sat[2] / 0.06,
     };
     nr_update_sib19(&sat_position);
+    update_ta_prediction(channelDesc, transparent, &sat_position, t_epoch);
   }
 }
 

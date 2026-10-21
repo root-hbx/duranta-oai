@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+from datetime import datetime
 
 import numpy as np
 from skyfield.api import EarthSatellite, load, wgs84
@@ -98,6 +99,7 @@ def generate_trace(
         time_label = "time_s"
 
     times = ts.tt_jd(start_time.tt + dt_s / 86400.0)
+    start_unix_ms = round(start_time.utc_datetime().timestamp() * 1000)
 
     geocentric = sat.at(times)
     sat_pos, sat_vel = geocentric.frame_xyz_and_velocity(itrs)
@@ -109,6 +111,7 @@ def generate_trace(
         rows.append(
             {
                 time_label: int(time_col[i]),
+                "utc_ms": start_unix_ms + round(dt_s[i] * 1000),
                 "pos_x": round(float(sat_pos_km[0, i] * 1e3), 3),
                 "pos_y": round(float(sat_pos_km[1, i] * 1e3), 3),
                 "pos_z": round(float(sat_pos_km[2, i] * 1e3), 3),
@@ -164,6 +167,13 @@ def main():
         help=f"Seconds before closest approach to start trace (default: {DEFAULT_START_OFFSET_S})",
     )
     parser.add_argument(
+        "--start-utc",
+        type=str,
+        default=None,
+        help="Trace start (UTC, e.g. 2026-10-18T06:56:20Z) instead of --start-offset before culmination, "
+        "to give several satellites the same time line",
+    )
+    parser.add_argument(
         "--gnd-position",
         dest="gnd_position",
         type=str,
@@ -204,9 +214,12 @@ def main():
         f"lon={station_info['lon_deg']:.6f} deg, alt={station_info['alt_m']:.1f} m"
     )
 
-    culmination = find_pass_culmination(sat, station, ts, ts.tt_jd(sat.epoch.tt))
-    start_time = ts.tt_jd(culmination.tt - args.start_offset / 86400.0)
-    print(f"  Pass culmination: {culmination.utc_strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    if args.start_utc is not None:
+        start_time = ts.from_datetime(datetime.fromisoformat(args.start_utc.replace("Z", "+00:00")))
+    else:
+        culmination = find_pass_culmination(sat, station, ts, ts.tt_jd(sat.epoch.tt))
+        start_time = ts.tt_jd(culmination.tt - args.start_offset / 86400.0)
+        print(f"  Pass culmination: {culmination.utc_strftime('%Y-%m-%d %H:%M:%S UTC')}")
     print(f"  Trace start: {start_time.utc_strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
     rows, time_label = generate_trace(
@@ -218,6 +231,7 @@ def main():
 
     fieldnames = [
         time_label,
+        "utc_ms",
         "pos_x",
         "pos_y",
         "pos_z",

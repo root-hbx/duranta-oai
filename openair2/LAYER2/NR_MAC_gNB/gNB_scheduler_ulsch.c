@@ -771,6 +771,15 @@ static void nr_rx_ra_sdu(gNB_MAC_INST *mac,
     NR_UE_sched_ctrl_t *sched_ctrl = &UE->UE_sched_ctrl;
     reset_dl_harq_list(sched_ctrl);
     reset_ul_harq_list(sched_ctrl);
+    // reconfigurationWithSync (handover): the UE applied the pending CellGroupConfig to access this cell. Apply it
+    // here too, else an ACKed SRB1 PDSCH before the RRCReconfigurationComplete is taken as an RRCReconfiguration
+    // ACK (ack_reconfig()), which falls back to the common search space
+    if (UE->reconfigCellGroup && UE->reconfigCellGroup->spCellConfig
+        && UE->reconfigCellGroup->spCellConfig->reconfigurationWithSync) {
+      ASN_STRUCT_FREE(asn_DEF_NR_CellGroupConfig, UE->CellGroup);
+      UE->CellGroup = UE->reconfigCellGroup;
+      UE->reconfigCellGroup = NULL;
+    }
     // we configure the UE using dedicated search space: In SA (CFRA used for
     // handover) and NSA (or do-ra), the UE has the full config already.
     int ss_type = NR_SearchSpace__searchSpaceType_PR_ue_Specific;
@@ -2804,8 +2813,12 @@ void nr_ulsch_preprocessor(gNB_MAC_INST *nr_mac, nr_cell_sched_t *cell, post_pro
 
   fsn_t *next = &cell->ul_next;
   while (max_dci > 0) {
-    /* go to the next UL slot, skipping DL if necessary */
-    *next = fsn_get_max(*next, min_next);
+    /* go to the next UL slot, skipping DL if necessary. A next in the past of current (the initial one) can
+     * still compare as later than min_next across the half-cycle of the frame wrap */
+    if (fsn_in_the_past(*next, current))
+      *next = min_next;
+    else
+      *next = fsn_get_max(*next, min_next);
     while (!is_ul_slot(next->s, fs))
       *next = fsn_add_delta(*next, 1);
     if (!is_dl_slot(current.s, fs)) // if current slot is not DL, nothing to do

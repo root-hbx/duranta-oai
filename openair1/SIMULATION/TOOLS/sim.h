@@ -143,10 +143,14 @@ typedef struct {
   sat_trace_sample_t *sat_trace;
   /// number of samples in sat_trace
   int sat_trace_len;
+  /// UTC (ms since 1970) at trace time 0, from sat_trace_utc_start or the optional "utc_ms" column, 0: unknown
+  double sat_trace_utc_ms;
   /// index of the last trace interval used, to speed up the lookup
   int sat_trace_last_idx;
   /// trace interpolation: false = linear, true = zero-order hold
   bool sat_interp_zoh;
+  /// trace time: false = since this link connected (start_TS), true = rfsim time, common to all links and nodes
+  bool sat_trace_common_clock;
   /// UE ECEF position (m), used in trace mode
   double pos_ue[3];
   /// gNB (ground station) ECEF position (m), used in trace mode for SAT_LEO_TRANS
@@ -313,6 +317,8 @@ typedef enum {
 #define CHANNELMOD_MODEL_DT_PNAME "ds_tdl"
 #define CHANNELMOD_MODEL_TRACE_PNAME "sat_trace_file"
 #define CHANNELMOD_MODEL_ZOH_PNAME "sat_interp_zoh"
+#define CHANNELMOD_MODEL_CLOCK_PNAME "sat_trace_common_clock"
+#define CHANNELMOD_MODEL_UTC_PNAME "sat_trace_utc_start"
 #define CHANNELMOD_MODEL_POS_UE_X_PNAME "pos_ue_x"
 #define CHANNELMOD_MODEL_POS_UE_Y_PNAME "pos_ue_y"
 #define CHANNELMOD_MODEL_POS_UE_Z_PNAME "pos_ue_z"
@@ -331,6 +337,8 @@ typedef enum {
     {CHANNELMOD_MODEL_DT_PNAME,   "delay spread for TDL models\n",     0,  .dblptr=NULL,             .defdblval=0,                     TYPE_DOUBLE,    0 }, \
     {CHANNELMOD_MODEL_TRACE_PNAME,     "satellite orbit trace CSV (SAT_LEO_*)\n", 0, .strptr=NULL, .defstrval="",       TYPE_STRING, 0 }, \
     {CHANNELMOD_MODEL_ZOH_PNAME,       "trace interp: 0=linear, 1=ZOH\n",       0, .iptr=NULL,   .defintval=0,        TYPE_INT,    0 }, \
+    {CHANNELMOD_MODEL_CLOCK_PNAME,     "trace time: 0=since link up, 1=rfsim\n", 0, .iptr=NULL,   .defintval=0,        TYPE_INT,    0 }, \
+    {CHANNELMOD_MODEL_UTC_PNAME,       "trace UTC at time 0 (ms since 1970)\n",  0, .u64ptr=NULL, .defint64val=0,      TYPE_UINT64, 0 }, \
     {CHANNELMOD_MODEL_POS_UE_X_PNAME,  "UE ECEF X (m), trace mode\n",           0, .dblptr=NULL, .defdblval=0,        TYPE_DOUBLE, 0 }, \
     {CHANNELMOD_MODEL_POS_UE_Y_PNAME,  "UE ECEF Y (m), trace mode\n",           0, .dblptr=NULL, .defdblval=0,        TYPE_DOUBLE, 0 }, \
     {CHANNELMOD_MODEL_POS_UE_Z_PNAME,  "UE ECEF Z (m), trace mode\n",           0, .dblptr=NULL, .defdblval=6377900,  TYPE_DOUBLE, 0 }, \
