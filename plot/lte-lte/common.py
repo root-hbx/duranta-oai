@@ -16,8 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-BUILD = Path(__file__).resolve().parent.parent / "build-lte"
-FIGS = Path(__file__).resolve().parent / "figs"
+BUILD = Path(__file__).resolve().parents[2] / "build-lte"
 PORT = 5201  # iperf3 server on the UE; the PGW-U is the client
 
 TCP_COLOR = "#2a78d6"
@@ -144,19 +143,19 @@ def label_run(ax, n):
   ax.text(0.01, 0.97, f"run {n}", transform=ax.transAxes, va="top", fontsize=7)
 
 
-def save(fig, name):
-  FIGS.mkdir(exist_ok=True)
-  fig.savefig(FIGS / f"{name}.pdf")
+def save(fig, figs, name):
+  figs.mkdir(exist_ok=True)
+  fig.savefig(figs / f"{name}.pdf")
   plt.close(fig)
-  print(FIGS / f"{name}.pdf")
+  print(figs / f"{name}.pdf")
 
 
 DIRS = ("dl", "ul")
 NAMES = {"dl": "DL", "ul": "UL"}
 
 
-def plot_bw(root):
-  """Throughput at the UE, one figure per direction: figs/lte_bw_<d>.pdf."""
+def plot_bw(root, figs):
+  """Throughput at the UE, one figure per direction: <figs>/lte_bw_<d>.pdf."""
   for d in DIRS:
     fig, axes = fig3(f"LTE X2 HO {NAMES[d]}: TCP throughput (ue.pcap)")
     for n, (ax, run) in enumerate(zip(axes, runs(root, f"tcp-{d}-connected")), 1):
@@ -171,12 +170,12 @@ def plot_bw(root):
       ax.set_ylabel("Mbps")
       label_run(ax, n)
     fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
-    save(fig, f"lte_bw_{d}")
+    save(fig, figs, f"lte_bw_{d}")
 
 
-def plot_rtt(root):
+def plot_rtt(root, figs):
   """TCP RTT at the PGW-U (sgi.pcap) with the ping RTT of the ping run with the same number, initiated on the TCP
-  sender's side (dl: PGW-U, ul: UE): figs/lte_rtt_<d>.pdf."""
+  sender's side (dl: PGW-U, ul: UE): <figs>/lte_rtt_<d>.pdf."""
   for d in DIRS:
     fig, axes = fig3(f"LTE X2 HO {NAMES[d]}: RTT")
     tcp_runs, ping_runs = runs(root, f"tcp-{d}-connected"), runs(root, "ping-connected")
@@ -195,4 +194,4 @@ def plot_rtt(root):
       ax.set_ylabel("RTT (ms)")
       label_run(ax, n)
     fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
-    save(fig, f"lte_rtt_{d}")
+    save(fig, figs, f"lte_rtt_{d}")
