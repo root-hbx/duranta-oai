@@ -16,8 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-BUILD = Path(__file__).resolve().parent.parent / "build"
-FIGS = Path(__file__).resolve().parent / "figs"
+BUILD = Path(__file__).resolve().parents[2] / "build"
 PORT = 5201  # iperf3 server on the UE; the UPF is the client
 
 TCP_COLOR = "#2a78d6"
@@ -148,11 +147,11 @@ def label_run(ax, n):
   ax.text(0.01, 0.97, f"run {n}", transform=ax.transAxes, va="top", fontsize=7)
 
 
-def save(fig, name):
-  FIGS.mkdir(exist_ok=True)
-  fig.savefig(FIGS / f"{name}.pdf")
+def save(fig, figs, name):
+  figs.mkdir(exist_ok=True)
+  fig.savefig(figs / f"{name}.pdf")
   plt.close(fig)
-  print(FIGS / f"{name}.pdf")
+  print(figs / f"{name}.pdf")
 
 
 MODES = ("trans", "regen")
@@ -160,8 +159,8 @@ DIRS = ("dl", "ul")
 NAMES = {"cho": "CHO", "n2": "N2 HO", "trans": "TRANS", "regen": "REGEN", "dl": "DL", "ul": "UL"}
 
 
-def plot_bw(root, mode, ho, tag):
-  """Throughput at the UE, one figure per {trans, regen} x {dl, ul}: figs/<tag>_bw_<m>_<d>.pdf."""
+def plot_bw(root, mode, ho, tag, figs):
+  """Throughput at the UE, one figure per {trans, regen} x {dl, ul}: <figs>/<tag>_bw_<m>_<d>.pdf."""
   for m in MODES:
     for d in DIRS:
       fig, axes = fig3(f"{NAMES[mode]} {NAMES[m]} {NAMES[d]}: TCP throughput (ue.pcap)")
@@ -177,12 +176,12 @@ def plot_bw(root, mode, ho, tag):
         ax.set_ylabel("Mbps")
         label_run(ax, n)
       fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
-      save(fig, f"{tag}_bw_{m}_{d}")
+      save(fig, figs, f"{tag}_bw_{m}_{d}")
 
 
-def plot_rtt(root, mode, ho, tag):
+def plot_rtt(root, mode, ho, tag, figs):
   """TCP RTT at the UPF (sgi.pcap) with the ping RTT of the ping run with the same number, initiated on the TCP
-  sender's side (dl: UPF, ul: UE): figs/<tag>_rtt_<m>_<d>.pdf."""
+  sender's side (dl: UPF, ul: UE): <figs>/<tag>_rtt_<m>_<d>.pdf."""
   for m in MODES:
     for d in DIRS:
       fig, axes = fig3(f"{NAMES[mode]} {NAMES[m]} {NAMES[d]}: RTT")
@@ -205,4 +204,4 @@ def plot_rtt(root, mode, ho, tag):
         ax.set_ylabel("RTT (ms)")
         label_run(ax, n)
       fig.legend(*axes[0].get_legend_handles_labels(), loc="outside lower center", ncol=2, frameon=False)
-      save(fig, f"{tag}_rtt_{m}_{d}")
+      save(fig, figs, f"{tag}_rtt_{m}_{d}")
