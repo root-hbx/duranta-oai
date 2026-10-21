@@ -39,27 +39,31 @@ extern void phy_reset_ue(module_id_t Mod_id,uint8_t CC_id,uint8_t eNB_index);
 
 
 
-/* sec 5.9, 36.321: MAC Reset Procedure */
+/* sec 5.9, 36.321: MAC Reset Procedure. The configuration from RRC (BSR/PHR timers, logical channel groups, buckets)
+ * is kept: a reset at handover must not fall back to the defaults of ue_init_mac(). */
 void ue_mac_reset(module_id_t module_idP, uint8_t eNB_index) {
-  //Resetting Bj
-  UE_mac_inst[module_idP].scheduling_info.Bj[0] = 0;
-  UE_mac_inst[module_idP].scheduling_info.Bj[1] = 0;
-  UE_mac_inst[module_idP].scheduling_info.Bj[2] = 0;
-  //Stopping all timers
-  //timeAlignmentTimer expires
-  // PHY changes for UE MAC reset
+  UE_MAC_INST *mac = &UE_mac_inst[module_idP];
+  UE_SCHEDULING_INFO *sched = &mac->scheduling_info;
+  for (int i = 0; i < MAX_NUM_LCID; i++) {
+    sched->Bj[i] = 0;
+    sched->LCID_status[i] = LCID_EMPTY;
+    sched->LCID_buffer_remain[i] = 0;
+  }
+  // stop all timers; timeAlignmentTimer expires and the HARQ buffers are flushed in the PHY reset
   phy_reset_ue(module_idP, 0, eNB_index);
-  // notify RRC to relase PUCCH/SRS
-  // cancel all pending SRs
-  UE_mac_inst[module_idP].scheduling_info.SR_pending = 0;
-  UE_mac_inst[module_idP].scheduling_info.SR_COUNTER = 0;
-  //Set BSR Trigger Bmp and remove timer flags
-  UE_mac_inst[module_idP].BSR_reporting_active = BSR_TRIGGER_NONE;
-  // stop ongoing RACH procedure
-  // discard explicitly signaled ra_PreambleIndex and ra_RACH_MaskIndex, if any
-  UE_mac_inst[module_idP].RA_prach_resources.ra_PreambleIndex = 0;  // check!
-  UE_mac_inst[module_idP].RA_prach_resources.ra_RACH_MaskIndex = 0;
-  ue_init_mac(module_idP);  //This will hopefully do the rest of the MAC reset procedure
+  sched->periodicBSR_SF = MAC_UE_BSR_TIMER_NOT_RUNNING;
+  sched->retxBSR_SF = MAC_UE_BSR_TIMER_NOT_RUNNING;
+  sched->periodicPHR_SF = get_sf_perioidicPHR_Timer(sched->periodicPHR_Timer);
+  sched->prohibitPHR_SF = get_sf_prohibitPHR_Timer(sched->prohibitPHR_Timer);
+  sched->sr_ProhibitTimer_Running = 0;
+  // cancel the triggered SR, BSR and PHR
+  sched->SR_pending = 0;
+  sched->SR_COUNTER = 0;
+  mac->BSR_reporting_active = BSR_TRIGGER_NONE;
+  mac->PHR_reporting_active = 0;
+  // stop ongoing RACH procedure, discard explicitly signaled ra_PreambleIndex and ra_RACH_MaskIndex
+  mac->RA_prach_resources.ra_PreambleIndex = 0;
+  mac->RA_prach_resources.ra_RACH_MaskIndex = 0;
 }
 
 int
