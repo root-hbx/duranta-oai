@@ -1,0 +1,34 @@
+# LTE <-> NR NTN: one dual-mode UE container, one eNB and one NTN gNB (single satellite), against the shared Open5GS
+# (EPC and 5GC with the same subscriber). xrat.sh runs the LTE and NR UE processes in xr-ue one after the other: the
+# applications and their sockets stay in the same network namespace across the RAT change, as on a real phone.
+# rfsim: the LTE UE is the server of the eNB, the NR UE a client of the gNB (ntn.sh link topology); each link's trace
+# clock starts when the NR UE connects, as in ntn.sh link, so the SIB19 calibration of ntn.yaml holds.
+services:
+  xr-ue:
+    extends: {file: ntn.yaml, service: nr-ue}
+    container_name: xr-ue
+    working_dir: /tmp
+    networks:
+      core: {ipv4_address: 172.22.0.61}
+    volumes:
+      - ../../..:/oai-ran:ro
+      - ${NR_BUILD:-../../../build}:/build
+      - ${LTE_BUILD:-../../../build-lte}:/build-lte
+    command: sleep infinity
+
+  lte-enb1:
+    extends: {file: lte.yaml, service: lte-enb1}
+    volumes:
+      - ../../..:/oai-ran:ro
+      - ${LTE_BUILD:-../../../build-lte}:/build
+
+  ntn-gnb1:
+    extends: {file: ntn.yaml, service: ntn-gnb1}
+    volumes:
+      - ../../..:/oai-ran:ro
+      - ${NR_BUILD:-../../../build}:/build
+
+networks:
+  core:
+    name: docker_open5gs_default
+    external: true

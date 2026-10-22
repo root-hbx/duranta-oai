@@ -1,6 +1,7 @@
 #!/bin/bash
-# All LTE-LTE and NTN-NTN experiments from scratch: clean build, LTE X2 batch, NTN CHO and N2 batches (log: run.log
-# in their result directories), figures. Stops if the build fails; the final rc is the number of failed runs.
+# All experiments from scratch: clean build, LTE X2 batch, NTN CHO and N2 batches, LTE <-> NTN RAT change batch (TRANS
+# and REGEN; log: run.log in their result directories), figures. Stops if the build fails; the final rc is the number of
+# failed runs.
 #   [RUNS=3] all.sh
 
 cd "$(dirname "$0")"
@@ -15,5 +16,6 @@ step env CLEAN=1 ./compile.sh all || { echo "DONE rc=$rc"; exit $rc; }
 step batch $repo/build-lte/pcap-lte-ho ./lte_batch.sh
 step batch $repo/build/pcap-ntn-cho ./ntn_batch.sh cho
 step batch $repo/build/pcap-ntn-n2ho ./ntn_batch.sh connected
+step batch $repo/build/pcap-xrat ./xrat_batch.sh
 step ./plot.sh
 echo "DONE rc=$rc"
