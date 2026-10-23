@@ -232,6 +232,8 @@ typedef enum {
 #define ENB_CONFIG_STRING_S1SETUP_REQ_COUNT             "s1setup_req_count"
 #define ENB_CONFIG_STRING_SCTP_REQ_TIMER                "sctp_req_timer"
 #define ENB_CONFIG_STRING_SCTP_REQ_COUNT                "sctp_req_count"
+#define ENB_CONFIG_STRING_NR_REDIRECT_ARFCN             "nr_redirect_arfcn"
+#define ENB_CONFIG_STRING_A2_THRESHOLD_RSRP             "a2_threshold_rsrp"
 /*-----------------------------------------------------------------------------------------------------------------------------------------*/
 /*                                            cell configuration parameters                                                                */
 /*   optname                                   helpstr   paramflags    XXXptr        defXXXval                   type           numelt     */
@@ -262,6 +264,8 @@ typedef enum {
   {ENB_CONFIG_STRING_S1SETUP_REQ_COUNT,            NULL,   0,            .uptr=NULL,   .defuintval=65535,            TYPE_UINT,      0},  \
   {ENB_CONFIG_STRING_SCTP_REQ_TIMER,               NULL,   0,            .uptr=NULL,   .defuintval=180,              TYPE_UINT,      0},  \
   {ENB_CONFIG_STRING_SCTP_REQ_COUNT,               NULL,   0,            .uptr=NULL,   .defuintval=65535,            TYPE_UINT,      0},  \
+  {ENB_CONFIG_STRING_NR_REDIRECT_ARFCN,            NULL,   0,            .uptr=NULL,   .defuintval=0,                TYPE_UINT,      0},  \
+  {ENB_CONFIG_STRING_A2_THRESHOLD_RSRP,            NULL,   0,            .uptr=NULL,   .defuintval=10,               TYPE_UINT,      0},  \
 }
 // clang-format on
 
@@ -289,6 +293,8 @@ typedef enum {
 #define ENB_S1SETUP_REQ_COUNT_IDX       21
 #define ENB_SCTP_REQ_TIMER_IDX          22
 #define ENB_SCTP_REQ_COUNT_IDX          23
+#define ENB_NR_REDIRECT_ARFCN_IDX       24
+#define ENB_A2_THRESHOLD_RSRP_IDX       25
 
 #define TRACKING_AREA_CODE_OKRANGE {0x0001,0xFFFD}
 

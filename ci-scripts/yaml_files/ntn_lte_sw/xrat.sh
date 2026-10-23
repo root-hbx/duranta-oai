@@ -10,6 +10,9 @@
 #   access   radio loss: the source UE process is killed (no detach) and the target one started at once; an NR target
 #            gets its pre-compensation aids (initial Doppler and drift) but a GNSS position 500 km off
 #   session  as access, with a valid GNSS position
+#   redirect the source cell fades out as in trigger; on the A2 report the source asks its core to release the UE
+#            and the release redirects it to the other RAT (no N26: 23.502 4.11.2); once the source UE logs it, the
+#            source process is killed and the target one started as in session
 # then T_POST s. The eNB and the gNB run from the start, as two satellites in view. events.txt: the change, the target
 # UE IP and its probe from the UPF. summary.txt, relative to the change: the source IP traffic after it, the radio link
 # failure of an NR source (trigger), the target access steps (UE log), the target IP and the old session at the SMF.
@@ -37,6 +40,10 @@ NR_STEPS=("sync|Initial sync successful" "sib19|Found SIB19" "rar|Found RAR with
 LTE_STEPS=("sync|Got synch" "rar|Received RAR" "rrc|State = RRC_CONNECTED" "ip|Send Attach Complete")
 # radio link failure handling of an NR source (the OAI LTE UE logs none)
 NR_LOSS=("T310|Timer T310 expired" "T311|T311 expired" "released|NR_NAS_CONN_RELEASE_IND")
+# redirect stage: the A2 report at the source cell, the release with redirection at the source UE
+LTE_REDIR=("a2|A2 report, RSRP" "release|RRCConnectionRelease with redirection to NR")
+NR_REDIR=("a2|A2 report, release with redirection" "release|RRCRelease with redirection to E-UTRA")
+NR_ARFCN=497770 EUTRA_ARFCN=3350  # SSB of the NTN gNB, DL carrier of the eNB (band 7, 2680 MHz)
 
 dc() { docker compose -p xrat -f xrat.yaml "$@"; }
 reset() { dc down 2>/dev/null || true
@@ -93,12 +100,17 @@ attach_source() { reset; amf_restart; dc up -d xr-ue ntn-gnb1 2>/dev/null
 left() { awk -v e=$(date +%s.%N) -v t=$t_end 'BEGIN { d = t - e; printf "%d", (d > 0 ? d : 0) }'; }
 # epoch s of a monotonic log time stamp (the softmodem log time is CLOCK_MONOTONIC = /proc/uptime)
 off() { awk -v e=$(date +%s.%N) '{ printf "%.6f", e - $1 }' /proc/uptime; }
-# steps <array> <rat>: first time of each step in the UE log of <rat>, relative to the change
-steps() { local o=$(off) s; local -n st=$1
+# steps <array> <log>...: first time of each step in the logs $out/logs/<log>.log, relative to the change
+steps() { local o=$(off) s; local -n st=$1; shift
   for s in "${st[@]}"; do
-    awk -v o=$o -v c=$t_change -v n="${s%%|*}" -v p="${s#*|}" 'index($0, p) && $1 ~ /^[0-9.]+$/ {
-      printf "%s +%.3f s  ", n, $1 + o - c; f = 1; exit } END { if (!f) printf "%s -  ", n }' $out/logs/xr-ue-$2.log
+    for l in "$@"; do cat $out/logs/$l.log; done |
+      awk -v o=$o -v c=$t_change -v n="${s%%|*}" -v p="${s#*|}" 'index($0, p) && $1 ~ /^[0-9.]+$/ {
+        printf "%s +%.3f s  ", n, $1 + o - c; f = 1; exit } END { if (!f) printf "%s -  ", n }'
   done; echo; }
+# wait_redirect <s>: the source UE logs the release with redirection
+wait_redirect() { local p=${LTE_REDIR[1]#*|} end=$(( $(date +%s) + $1 )); [ $src = nr ] && p=${NR_REDIR[1]#*|}
+  while [ $(date +%s) -lt $end ]; do docker exec xr-ue grep -q "$p" /tmp/$src.log 2>/dev/null && return; sleep 0.1; done
+  return 1; }
 # packets of the source IP traffic at the receiver after the change (2 s grace for the ones in flight)
 after_change() { docker run --rm -v $out:/cap --entrypoint tcpdump docker_open5gs -r /cap/$rx -tt -nq \
     "($data) and host $ip0" 2>/dev/null |
@@ -112,10 +124,14 @@ finish() { traffic_stop; sleep 1
   { echo "$dir $mode $STAGE: source $src IP $ip0"
     if [ -n "$t_change" ]; then
       echo "source IP traffic after the change: $(after_change)"
-      [ $STAGE != trigger ] || [ $src != nr ] || echo "source nr radio link failure: $(steps NR_LOSS nr)"
+      [ $STAGE != trigger ] || [ $src != nr ] || echo "source nr radio link failure: $(steps NR_LOSS xr-ue-nr)"
+      if [ $STAGE = redirect ]; then
+        if [ $src = lte ]; then echo "source redirection: $(steps LTE_REDIR lte-enb1 xr-ue-lte)"
+        else echo "source redirection: $(steps NR_REDIR ntn-gnb1 xr-ue-nr)"; fi
+      fi
       if [ -n "$tgt" ]; then
         local n; [ $tgt = nr ] && n=NR_STEPS || n=LTE_STEPS
-        echo "target $tgt steps: $(steps $n $tgt)"
+        echo "target $tgt steps: $(steps $n xr-ue-$tgt)"
         echo "target IP ${ip1:-none}${ip1:+, $([ "$ip1" = "$ip0" ] && echo same || echo different), UPF probe $probe}"
         echo "source session at the SMF: $(docker logs --since ${t_change%.*} smf 2>&1 | grep -q "Removed Session.*IPv4:\[$ip0\]" &&
           echo removed || echo kept)"
@@ -142,6 +158,13 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe=
     access|session) tgt=nr; [ $src = nr ] && tgt=lte
       t_change=$(date +%s.%N); ev "change: kill the $src UE, start the $tgt UE"; ue_kill $src
       if [ $tgt = lte ]; then lte_up; elif [ $STAGE = access ]; then nr_up $GNSS_ERR; else nr_up 0; fi ;;
+    redirect) t_change=$(date +%s.%N); ev "change: source fade-out"; fade & local fp=$!
+      if wait_redirect 30; then tgt=nr; [ $src = nr ] && tgt=lte
+        kill $fp 2>/dev/null || true  # the fade only drives the A2 report
+        ev "redirection: kill the $src UE, start the $tgt UE"; ue_kill $src
+        if [ $tgt = lte ]; then lte_up; else nr_up 0; fi
+      else ev "no redirection"; fi
+      wait $fp ;;
   esac
   if [ -n "$tgt" ]; then
     if wait_target $(left); then ip1=$ip; ev "target UE IP $ip1"; [ $tgt = lte ] || join_nbr
@@ -153,7 +176,7 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe=
 
 usage() { sed -n '2,/^$/p' $0; exit 1; }
 case $1 in lte2ntn) src=lte ;; ntn2lte) src=nr ;; *) usage ;; esac
-case $STAGE in base|trigger|access|session) ;; *) usage ;; esac
+case $STAGE in base|trigger|access|session|redirect) ;; *) usage ;; esac
 dir=$1
 gnbs=ntn-gnb1 NR_RFSIM=\$RFSIM
 if [ -n "$TWO_SAT" ]; then
@@ -174,6 +197,13 @@ if [ -n "$TWO_SAT" ]; then
     export UE_GNSS="--ntn-gnss-utc-start $(( U0 + T_CHANGE * 1000 ))" UE_FO=50710 UE_DRIFT=-41
     [ -n "$REGEN" ] && export UE_DRIFT=-20
   fi
+fi
+if [ $STAGE = redirect ]; then
+  # A2 thresholds (RSRP range index) below the unfaded source L3 RSRP: LTE -136 dBm (index - 140; the rfsim LTE UE
+  # measures close to the -140 dBm floor, the first fade step reaches it), NR -36 dBm (index - 157)
+  export ENB1_EXTRA="$ENB1_EXTRA --eNBs.[0].nr_redirect_arfcn $NR_ARFCN --eNBs.[0].a2_threshold_rsrp ${A2_LTE:-2}"
+  a2=--gNBs.[0].nr_measurement_configuration.A2
+  export GNB1_EXTRA="$GNB1_EXTRA $a2.redirect_eutra_arfcn $EUTRA_ARFCN $a2.threshold ${A2_NR:-115} $a2.time_to_trigger 1"
 fi
 for r in $(seq ${2:-1}); do run $r || echo "run $r: no source attach"; done
 reset

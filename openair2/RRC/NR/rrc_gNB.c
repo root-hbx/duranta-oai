@@ -1819,9 +1819,18 @@ static void process_Event_Based_Measurement_Report(gNB_RRC_INST *rrc,
   int best_rsrp = -10000;
 
   switch (event_triggered->eventId.present) {
-    case NR_EventTriggerConfig__eventId_PR_eventA2:
+    case NR_EventTriggerConfig__eventId_PR_eventA2: {
       LOG_I(NR_RRC, "HO LOG: Event A2 (Serving becomes worse than threshold)\n");
+      // no inter-system handover (no N26): ask the AMF to release the UE, the release redirects it to E-UTRA (38.331 5.3.8)
+      const nr_a2_event_t *a2 = rrc->measurementConfiguration.a2_event;
+      if (a2 && a2->redirect_eutra_arfcn && !ue->eutra_redirect) {
+        ue->eutra_redirect = a2->redirect_eutra_arfcn;
+        LOG_I(NR_RRC, "UE %d: A2 report, release with redirection to E-UTRA ARFCN %ld\n", ue->rrc_ue_id, ue->eutra_redirect);
+        ngap_cause_t cause = {.type = NGAP_CAUSE_RADIO_NETWORK, .value = NGAP_CAUSE_RADIO_NETWORK_REDIRECTION};
+        rrc_gNB_send_NGAP_UE_CONTEXT_RELEASE_REQ(rrc->module_id, rrc_gNB_get_ue_context(rrc, ue->rrc_ue_id), cause);
+      }
       break;
+    }
 
     case NR_EventTriggerConfig__eventId_PR_eventA3: {
       LOG_W(NR_RRC, "HO LOG: Event A3 Report for UE %d - Neighbour Becomes Better than Serving!\n", ue->rrc_ue_id);
@@ -2854,7 +2863,7 @@ static void rrc_CU_process_ue_context_release_request(MessageDef *msg_p, sctp_as
   if (!ue_context_p) {
     LOG_W(RRC, "could not find UE context for CU UE ID %u: auto-generate release command\n", req->gNB_CU_ue_id);
     uint8_t buffer[NR_RRC_BUF_SIZE] = {0};
-    int size = do_NR_RRCRelease(buffer, NR_RRC_BUF_SIZE, rrc_gNB_get_next_transaction_identifier(0));
+    int size = do_NR_RRCRelease(buffer, NR_RRC_BUF_SIZE, rrc_gNB_get_next_transaction_identifier(0), 0);
     RETURN_IF_INVALID_ASSOC_ID(assoc_id);
     f1ap_ue_context_rel_cmd_t ue_context_release_cmd = {
         .gNB_CU_ue_id = req->gNB_CU_ue_id,
@@ -4209,7 +4218,7 @@ void rrc_gNB_generate_SecurityModeCommand(gNB_RRC_INST *rrc, gNB_RRC_UE_t *ue_p)
 void rrc_gNB_generate_RRCRelease(gNB_RRC_INST *rrc, gNB_RRC_UE_t *UE)
 {
   uint8_t buffer[NR_RRC_BUF_SIZE] = {0};
-  int size = do_NR_RRCRelease(buffer, NR_RRC_BUF_SIZE, rrc_gNB_get_next_transaction_identifier(rrc->module_id));
+  int size = do_NR_RRCRelease(buffer, NR_RRC_BUF_SIZE, rrc_gNB_get_next_transaction_identifier(rrc->module_id), UE->eutra_redirect);
 
   LOG_UE_DL_EVENT(UE, "Send RRC Release\n");
   f1_ue_data_t ue_data = cu_get_f1_ue_data(UE->rrc_ue_id);

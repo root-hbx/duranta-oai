@@ -439,6 +439,7 @@ typedef enum {
 #define MEASUREMENT_EVENTS_HYSTERESIS "hysteresis"
 #define MEASUREMENT_EVENTS_TIME_TO_TRIGGER "time_to_trigger"
 #define MEASUREMENT_EVENTS_THRESHOLD "threshold"
+#define MEASUREMENT_EVENTS_REDIRECT_EUTRA_ARFCN "redirect_eutra_arfcn"
 #define MEASUREMENT_EVENTS_PERIODICAL_BEAM_MEASUREMENT "includeBeamMeasurements"
 #define MEASUREMENT_EVENTS_PERIODICAL_NR_OF_RS_INDEXES "maxNrofRS_IndexesToReport"
 #define MEASUREMENT_EVENTS_PCI_ID "physCellId"
@@ -457,6 +458,7 @@ typedef enum {
         {MEASUREMENT_EVENT_ENABLE, "enable the event", 0, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
         {MEASUREMENT_EVENTS_TIME_TO_TRIGGER, "a2 time to trigger", 0, .i64ptr = NULL, .defint64val = 1, TYPE_INT64, 0}, \
         {MEASUREMENT_EVENTS_THRESHOLD, "a2 threshold", 0, .i64ptr = NULL, .defint64val = 60, TYPE_INT64, 0},            \
+        {MEASUREMENT_EVENTS_REDIRECT_EUTRA_ARFCN, "E-UTRA ARFCN to redirect to on A2, 0: none", 0, .i64ptr = NULL, .defint64val = 0, TYPE_INT64, 0}, \
   }
 
 #define MEASUREMENT_PERIODICAL_GLOBALPARAMS_DESC                                                                                      \
@@ -471,6 +473,7 @@ typedef enum {
 #define MEASUREMENT_EVENTS_ENABLE_IDX 0
 #define MEASUREMENT_EVENTS_TIMETOTRIGGER_IDX 1
 #define MEASUREMENT_EVENTS_A2_THRESHOLD_IDX 2
+#define MEASUREMENT_EVENTS_A2_REDIRECT_EUTRA_ARFCN_IDX 3
 #define MEASUREMENT_EVENTS_OFFSET_IDX 2
 #define MEASUREMENT_EVENTS_HYSTERESIS_IDX 3
 #define MEASUREMENT_EVENTS_INCLUDE_BEAM_MEAS_IDX 1

@@ -90,7 +90,7 @@ int do_NR_SecurityModeCommand(uint8_t *const buffer,
 
 int do_NR_SA_UECapabilityEnquiry(uint8_t *const buffer, const uint8_t Transaction_id);
 
-int do_NR_RRCRelease(uint8_t *buffer, size_t buffer_size, uint8_t Transaction_id);
+int do_NR_RRCRelease(uint8_t *buffer, size_t buffer_size, uint8_t Transaction_id, long eutra_arfcn);
 
 byte_array_t do_RRCReconfiguration(const nr_rrc_reconfig_param_t *params);
 

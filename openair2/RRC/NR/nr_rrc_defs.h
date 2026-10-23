@@ -188,6 +188,7 @@ typedef struct gNB_RRC_UE_s {
 
   bool as_security_active;
   bool f1_ue_context_active;
+  long eutra_redirect; // E-UTRA ARFCN of the release with redirection, 0: none
 
   byte_array_t ue_cap_buffer;
   NR_UE_NR_Capability_t*             UE_Capability_nr;
@@ -313,6 +314,7 @@ typedef struct {
 typedef struct {
   long threshold_RSRP;
   long timeToTrigger;
+  long redirect_eutra_arfcn; // E-UTRA ARFCN to redirect the UE to on an A2 report, 0: no redirection
 } nr_a2_event_t;
 
 typedef struct {

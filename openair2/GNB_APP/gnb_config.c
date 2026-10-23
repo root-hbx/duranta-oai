@@ -2318,6 +2318,7 @@ static void fill_measurement_configuration(uint8_t gnb_idx, gNB_RRC_INST *rrc)
     nr_a2_event_t *a2_event = (nr_a2_event_t *)calloc(1, sizeof(nr_a2_event_t));
     a2_event->threshold_RSRP = *A2_EventParams[MEASUREMENT_EVENTS_A2_THRESHOLD_IDX].i64ptr;
     a2_event->timeToTrigger = *A2_EventParams[MEASUREMENT_EVENTS_TIMETOTRIGGER_IDX].i64ptr;
+    a2_event->redirect_eutra_arfcn = *A2_EventParams[MEASUREMENT_EVENTS_A2_REDIRECT_EUTRA_ARFCN_IDX].i64ptr;
 
     measurementConfig->a2_event = a2_event;
   }

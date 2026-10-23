@@ -606,6 +606,7 @@ typedef struct eNB_RRC_UE_s {
   transport_layer_addr_t             enb_gtp_x2u_addrs[S1AP_MAX_E_RAB];
   rb_id_t                            enb_gtp_x2u_ebi[S1AP_MAX_E_RAB];
   uint32_t                           ul_failure_timer;
+  bool                               nr_redirect; // release with redirection to NR requested
   uint32_t                           ue_release_timer;
   uint32_t                           ue_release_timer_thres;
   uint32_t                           ue_release_timer_s1;

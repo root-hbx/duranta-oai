@@ -1539,7 +1539,8 @@ rrc_eNB_process_RRCConnectionReestablishmentComplete(
     ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
     eventA2.a2_Threshold.present = LTE_ThresholdEUTRA_PR_threshold_RSRP;
     ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
-    eventA2.a2_Threshold.choice.threshold_RSRP = 10;
+    eventA2.a2_Threshold.choice.threshold_RSRP = RC.rrc[ctxt_pP->module_id]->configuration.a2_threshold_rsrp;
+    ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.timeToTrigger = LTE_TimeToTrigger_ms1280;
     ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerQuantity =
       LTE_ReportConfigEUTRA__triggerQuantity_rsrp;
     ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.reportQuantity = LTE_ReportConfigEUTRA__reportQuantity_both;
@@ -1837,8 +1838,11 @@ rrc_eNB_generate_RRCConnectionRelease(
   }
 
 #endif
+  uint32_t nr_arfcn = 0;
+  if (ue_context_pP->ue_context.nr_redirect)
+    nr_arfcn = RC.rrc[ctxt_pP->module_id]->configuration.nr_redirect_arfcn;
   size = do_RRCConnectionRelease(ctxt_pP->module_id, buffer, sizeof(buffer),
-                                 rrc_eNB_get_next_transaction_identifier(ctxt_pP->module_id));
+                                 rrc_eNB_get_next_transaction_identifier(ctxt_pP->module_id), nr_arfcn);
   ue_context_pP->ue_context.ue_reestablishment_timer = 0;
   ue_context_pP->ue_context.ue_release_timer = 0;
   ue_context_pP->ue_context.ue_rrc_inactivity_timer = 0;
@@ -2939,7 +2943,8 @@ void rrc_eNB_generate_defaultRRCConnectionReconfiguration(const protocol_ctxt_t 
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
   eventA2.a2_Threshold.present = LTE_ThresholdEUTRA_PR_threshold_RSRP;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
-  eventA2.a2_Threshold.choice.threshold_RSRP = 10;
+  eventA2.a2_Threshold.choice.threshold_RSRP = RC.rrc[ctxt_pP->module_id]->configuration.a2_threshold_rsrp;
+  ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.timeToTrigger = LTE_TimeToTrigger_ms1280;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerQuantity =
     LTE_ReportConfigEUTRA__triggerQuantity_rsrp;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.reportQuantity = LTE_ReportConfigEUTRA__reportQuantity_both;
@@ -3341,6 +3346,18 @@ rrc_eNB_process_MeasurementReport(
 
       case 3:
         LOG_D(RRC,"A2 event report (Serving becomes worse than absolute threshold) at frame %d and subframe %d \n", ctxt_pP->frame, ctxt_pP->subframe);
+        // no inter-system handover (no N26): ask the MME to release the UE, the release redirects it to NR (36.331 5.3.8)
+        if (RC.rrc[ctxt_pP->module_id]->configuration.nr_redirect_arfcn && !ue_context_pP->ue_context.nr_redirect) {
+          ue_context_pP->ue_context.nr_redirect = true;
+          LOG_I(RRC,
+                "A2 report, RSRP %ld dBm: release with redirection to NR ARFCN %u\n",
+                measResults2->measResultPCell.rsrpResult - 140,
+                RC.rrc[ctxt_pP->module_id]->configuration.nr_redirect_arfcn);
+          rrc_eNB_send_S1AP_UE_CONTEXT_RELEASE_REQ(ctxt_pP->module_id,
+                                                   ue_context_pP,
+                                                   S1AP_CAUSE_RADIO_NETWORK,
+                                                   28); // cause 28: interrat-redirection (36.413)
+        }
         break;
 
       case 4:
@@ -4619,7 +4636,8 @@ rrc_eNB_generate_HO_RRCConnectionReconfiguration(const protocol_ctxt_t *const ct
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
   eventA2.a2_Threshold.present = LTE_ThresholdEUTRA_PR_threshold_RSRP;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId.choice.
-  eventA2.a2_Threshold.choice.threshold_RSRP = 10;
+  eventA2.a2_Threshold.choice.threshold_RSRP = RC.rrc[ctxt_pP->module_id]->configuration.a2_threshold_rsrp;
+  ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.timeToTrigger = LTE_TimeToTrigger_ms1280;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.triggerQuantity =
     LTE_ReportConfigEUTRA__triggerQuantity_rsrp;
   ReportConfig_A2->reportConfig.choice.reportConfigEUTRA.reportQuantity = LTE_ReportConfigEUTRA__reportQuantity_both;

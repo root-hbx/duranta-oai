@@ -147,6 +147,14 @@ static uint8_t check_trigger_meas_event(
   LTE_Q_OffsetRange_t ofn, LTE_Q_OffsetRange_t ocn, LTE_Hysteresis_t hys,
   LTE_Q_OffsetRange_t ofs, LTE_Q_OffsetRange_t ocs, long a3_offset, LTE_TimeToTrigger_t ttt);
 
+static bool check_trigger_a2(module_id_t ue_mod_idP,
+                             uint8_t eNB_index,
+                             uint8_t ue_cnx_index,
+                             uint8_t meas_index,
+                             LTE_Hysteresis_t hys,
+                             long thresh_index,
+                             LTE_TimeToTrigger_t ttt);
+
 static void decode_MBSFNAreaConfiguration(module_id_t module_idP, uint8_t eNB_index, frame_t frameP,uint8_t mbsfn_sync_area);
 static void decode_MBMSCountingRequest(module_id_t module_idP, uint8_t eNB_index, frame_t frameP,uint8_t mbsfn_sync_area);
 
@@ -2001,8 +2009,13 @@ static void rrc_ue_decode_dcch(const protocol_ctxt_t *const ctxt_pP,
                == LTE_RRCConnectionRelease__criticalExtensions_PR_c1)
               && (dl_dcch_msg->message.choice.c1.choice.rrcConnectionRelease.criticalExtensions.choice.c1.present
                   == LTE_RRCConnectionRelease__criticalExtensions__c1_PR_rrcConnectionRelease_r8)) {
-            NAS_CONN_RELEASE_IND(msg_p).cause =
-              dl_dcch_msg->message.choice.c1.choice.rrcConnectionRelease.criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.releaseCause;
+            LTE_RRCConnectionRelease_r8_IEs_t *rel =
+                &dl_dcch_msg->message.choice.c1.choice.rrcConnectionRelease.criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8;
+            NAS_CONN_RELEASE_IND(msg_p).cause = rel->releaseCause;
+            // the NR stack is another process: the redirection is left to the harness, which watches this log
+            if (rel->redirectedCarrierInfo && rel->redirectedCarrierInfo->present == LTE_RedirectedCarrierInfo_PR_nr_r15)
+              LOG_A(RRC, "RRCConnectionRelease with redirection to NR ARFCN %ld\n",
+                    rel->redirectedCarrierInfo->choice.nr_r15.carrierFreq_r15);
           }
 
           itti_send_msg_to_task(TASK_NAS_UE, ctxt_pP->instance, msg_p);
@@ -3858,10 +3871,29 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
                         ctxt_pP->module_id, ctxt_pP->frame);
                   break;
 
-                case LTE_ReportConfigEUTRA__triggerType__event__eventId_PR_eventA2:
+                case LTE_ReportConfigEUTRA__triggerType__event__eventId_PR_eventA2: {
                   LOG_D(RRC,"[UE %d] Frame %d : A2 event, check if serving becomes worse than a threshold\n",
                         ctxt_pP->module_id, ctxt_pP->frame);
+                  const LTE_ThresholdEUTRA_t *th = &ue->ReportConfig[i][reportConfigId - 1]
+                                                        ->reportConfig.choice.reportConfigEUTRA.triggerType.choice.event.eventId
+                                                        .choice.eventA2.a2_Threshold;
+                  bool entered = th->present == LTE_ThresholdEUTRA_PR_threshold_RSRP
+                                 && check_trigger_a2(ctxt_pP->module_id, eNB_index, i, j, hys, th->choice.threshold_RSRP, ttt_ms)
+                                 && ue->Info[0].State >= RRC_CONNECTED;
+                  if (entered && ue->measReportList[i][j] == NULL) {
+                    // one report on entering (the measReportList entry marks it), a new one only after leaving
+                    ue->measReportList[i][j] = malloc(sizeof(MEAS_REPORT_LIST));
+                    ue->measReportList[i][j]->measId = ue->MeasId[i][j]->measId;
+                    ue->measReportList[i][j]->numberOfReportsSent = 0;
+                    LOG_I(RRC, "[UE %d] Frame %d: A2 triggered, serving RSRP %.1f dBm\n", ctxt_pP->module_id, ctxt_pP->frame,
+                          ue->rsrp_db_filtered[eNB_index]);
+                    rrc_ue_generate_MeasurementReport(ctxt_pP, eNB_index);
+                  } else if (!entered && ue->measReportList[i][j] != NULL) {
+                    free(ue->measReportList[i][j]);
+                    ue->measReportList[i][j] = NULL;
+                  }
                   break;
+                }
 
                 case LTE_ReportConfigEUTRA__triggerType__event__eventId_PR_eventA3:
                   LOG_D(RRC,"[UE %d] Frame %d : A3 event: check if a neighboring cell becomes offset better than serving to trigger a measurement event \n",
@@ -3928,6 +3960,26 @@ static int q_offset_db(LTE_Q_OffsetRange_t q)
                               1,   2,   3,   4,   5,   6,   8,   10,  12, 14, 16, 18, 20, 22, 24};
   DevAssert(q >= 0 && q < sizeofArray(db));
   return db[q];
+}
+
+/* Event A2 entering condition, 36.331 5.5.4.3: Ms + Hys < Thresh (Hys in 0.5 dB, Thresh an RSRP range index, 36.133) */
+static bool check_trigger_a2(module_id_t ue_mod_idP,
+                             uint8_t eNB_index,
+                             uint8_t ue_cnx_index,
+                             uint8_t meas_index,
+                             LTE_Hysteresis_t hys,
+                             long thresh_index,
+                             LTE_TimeToTrigger_t ttt)
+{
+  UE_RRC_INST *ue = &UE_rrc_inst[ue_mod_idP];
+  const float ms = ue->rsrp_db_filtered[eNB_index] + hys / 2.0;
+  uint32_t *timer = &ue->measTimer[ue_cnx_index][meas_index][0];
+  if (ms >= thresh_index - 140) {
+    *timer = 0;
+    return false;
+  }
+  *timer += 1; // called once per 1 ms subframe
+  return *timer >= ttt;
 }
 
 /* Event A3 entering condition, 36.331 5.5.4.4: Mn + Ofn + Ocn - Hys > Mp + Ofp + Ocp + Off (Hys and Off in 0.5 dB) */

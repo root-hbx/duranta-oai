@@ -307,7 +307,7 @@ routine only generates an mo-data establishment cause.
 @param transaction_id Transaction index
 @returns Size of encoded bit stream in bytes*/
 
-uint8_t do_RRCConnectionRelease(uint8_t Mod_id, uint8_t *buffer, size_t buffer_size, int Transaction_id);
+uint8_t do_RRCConnectionRelease(uint8_t Mod_id, uint8_t *buffer, size_t buffer_size, int Transaction_id, uint32_t nr_arfcn);
 
 /***
  * \brief Generate an MCCH-Message (eNB). This routine configures MBSFNAreaConfiguration (PMCH-InfoList and Subframe Allocation for MBMS data)

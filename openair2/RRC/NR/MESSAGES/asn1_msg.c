@@ -483,7 +483,7 @@ int do_NR_SA_UECapabilityEnquiry(uint8_t *const buffer, const uint8_t Transactio
   return((enc_rval.encoded+7)/8);
 }
 
-int do_NR_RRCRelease(uint8_t *buffer, size_t buffer_size, uint8_t Transaction_id)
+int do_NR_RRCRelease(uint8_t *buffer, size_t buffer_size, uint8_t Transaction_id, long eutra_arfcn)
 {
   asn_enc_rval_t enc_rval;
   NR_DL_DCCH_Message_t dl_dcch_msg;
@@ -504,6 +504,15 @@ int do_NR_RRCRelease(uint8_t *buffer, size_t buffer_size, uint8_t Transaction_id
       NR_RRCRelease_IEs__deprioritisationReq__deprioritisationType_nr;
   rrcConnectionRelease->criticalExtensions.choice.rrcRelease->deprioritisationReq->deprioritisationTimer =
       NR_RRCRelease_IEs__deprioritisationReq__deprioritisationTimer_min10;
+  if (eutra_arfcn) {
+    // redirection to an E-UTRA carrier connected to EPC (38.331 RedirectedCarrierInfo-EUTRA)
+    NR_RedirectedCarrierInfo_t *rci = CALLOC(1, sizeof(*rci));
+    rci->present = NR_RedirectedCarrierInfo_PR_eutra;
+    rci->choice.eutra = CALLOC(1, sizeof(*rci->choice.eutra));
+    rci->choice.eutra->eutraFrequency = eutra_arfcn;
+    asn1cCallocOne(rci->choice.eutra->cnType, NR_RedirectedCarrierInfo_EUTRA__cnType_epc);
+    rrcConnectionRelease->criticalExtensions.choice.rrcRelease->redirectedCarrierInfo = rci;
+  }
 
   enc_rval = uper_encode_to_buffer(&asn_DEF_NR_DL_DCCH_Message,
                                    NULL,

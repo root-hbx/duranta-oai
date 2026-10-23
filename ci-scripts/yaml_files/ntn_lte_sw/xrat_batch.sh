@@ -2,7 +2,8 @@
 # LTE <-> NR NTN RAT change batch: TRANS and REGEN, each lte2ntn and ntn2lte, each stage base, trigger, access and
 # session, each TCP dl and ping (xrat_tcp.sh, xrat_ping.sh), RUNS runs, under PCAP_DIR, then PCAP_DIR/report.txt with
 # one line per run.
-#   [RUNS=3] [PCAP_DIR=build/pcap-xrat] xrat_batch.sh
+#   [RUNS=3] [PCAP_DIR=build/pcap-xrat] [MODES="trans regen"] [STAGES="base trigger access session"] [TYPES="tcp ping"]
+#   xrat_batch.sh      STAGES may also name redirect (xrat.sh)
 # Exit status: the number of failed invocations.
 
 cd "$(dirname "$0")"
@@ -15,6 +16,7 @@ step() { echo "### $(date +%T) $*"; env "$@" || fail=$((fail + 1)); }
 report() { for d in $(ls -d $PCAP_DIR/*-[0-9]-*/ | sort); do
   awk -v run=$(basename $d) '/^source IP traffic/ { sub(/.*change: /, ""); after = $0 }
     /^source nr radio link failure/ { sub(/.*failure: /, ""); rlf = " | src rlf " $0 }
+    /^source redirection/ { sub(/.*redirection: /, ""); rlf = " | src redirect " $0 }
     /^target .* steps/ { sub(/^target /, ""); tgt = " | " $0 }
     /^target IP/ { sub(/^target IP /, ""); ip = " | ip " $0 }
     /^source session/ { sess = " | old session " $NF }
@@ -23,10 +25,11 @@ report() { for d in $(ls -d $PCAP_DIR/*-[0-9]-*/ | sort); do
     END { printf "%-44s after %s%s%s%s%s%s%s\n", run, after ? after : "-", rlf, tgt, ip, sess, mbps, loss }' $d/summary.txt
 done; }
 
-for regen in "" 1; do
+for mode in ${MODES:-trans regen}; do
+  regen=; [ $mode = regen ] && regen=1
   for d in lte2ntn ntn2lte; do
-    for s in base trigger access session; do
-      for t in ./xrat_tcp.sh ./xrat_ping.sh; do step REGEN=$regen STAGE=$s $t $d $RUNS; done
+    for s in ${STAGES:-base trigger access session}; do
+      for t in ${TYPES:-tcp ping}; do step REGEN=$regen STAGE=$s ./xrat_$t.sh $d $RUNS; done
     done
   done
 done

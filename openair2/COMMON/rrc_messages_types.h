@@ -184,6 +184,8 @@ typedef struct RrcConfigurationReq_s {
   int                     enable_measurement_reports;
   int                     enable_x2;
   uint32_t                rrc_inactivity_timer_thres; // for testing, maybe change later
+  uint32_t                nr_redirect_arfcn; // NR SSB ARFCN to redirect a UE to on an A2 report, 0: no redirection
+  uint8_t                 a2_threshold_rsrp; // RSRP range index of the A2 event (36.133)
   paging_drx_t            default_drx;
   int16_t                 nb_cc;
   frame_type_t            frame_type[MAX_NUM_CCs];

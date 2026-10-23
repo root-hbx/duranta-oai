@@ -308,6 +308,8 @@ int RCconfig_RRC(uint32_t i, eNB_RRC_INST *rrc) {
 
         // In the configuration file it is in seconds. For RRC it has to be in milliseconds
         RRCcfg->rrc_inactivity_timer_thres = (*ENBParamList.paramarray[i][ENB_RRC_INACTIVITY_THRES_IDX].uptr) * 1000;
+        RRCcfg->nr_redirect_arfcn = *ENBParamList.paramarray[i][ENB_NR_REDIRECT_ARFCN_IDX].uptr;
+        RRCcfg->a2_threshold_rsrp = *ENBParamList.paramarray[i][ENB_A2_THRESHOLD_RSRP_IDX].uptr;
         RRCcfg->cell_identity = enb_id;
         RRCcfg->tac = *ENBParamList.paramarray[i][ENB_TRACKING_AREA_CODE_IDX].uptr;
         AssertFatal(!ENBParamList.paramarray[i][ENB_MOBILE_COUNTRY_CODE_IDX_OLD].strptr

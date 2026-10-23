@@ -3991,7 +3991,8 @@ uint8_t do_RRCConnectionReject(uint8_t                    Mod_id,
 uint8_t do_RRCConnectionRelease(uint8_t                             Mod_id,
                                 uint8_t                            *buffer,
                                 size_t                              buffer_size,
-                                uint8_t                             Transaction_id) {
+                                uint8_t                             Transaction_id,
+                                uint32_t                            nr_arfcn) {
   asn_enc_rval_t enc_rval;
   LTE_DL_DCCH_Message_t dl_dcch_msg;
   LTE_RRCConnectionRelease_t *rrcConnectionRelease;
@@ -4005,6 +4006,14 @@ uint8_t do_RRCConnectionRelease(uint8_t                             Mod_id,
   rrcConnectionRelease->criticalExtensions.choice.c1.present =LTE_RRCConnectionRelease__criticalExtensions__c1_PR_rrcConnectionRelease_r8 ;
   rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.releaseCause = LTE_ReleaseCause_other;
   rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.redirectedCarrierInfo = NULL;
+  if (nr_arfcn) {
+    // redirection to an NR carrier (36.331 RedirectedCarrierInfo nr-r15), SSB at 15 kHz
+    LTE_RedirectedCarrierInfo_t *rci = CALLOC(1, sizeof(*rci));
+    rci->present = LTE_RedirectedCarrierInfo_PR_nr_r15;
+    rci->choice.nr_r15.carrierFreq_r15 = nr_arfcn;
+    rci->choice.nr_r15.subcarrierSpacingSSB_r15 = LTE_CarrierInfoNR_r15__subcarrierSpacingSSB_r15_kHz15;
+    rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.redirectedCarrierInfo = rci;
+  }
   rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.idleModeMobilityControlInfo = NULL;
   rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.nonCriticalExtension=CALLOC(1,
       sizeof(*rrcConnectionRelease->criticalExtensions.choice.c1.choice.rrcConnectionRelease_r8.nonCriticalExtension));

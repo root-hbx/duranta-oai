@@ -3841,8 +3841,19 @@ void handle_RRCRelease(NR_UE_RRC_INST_t *rrc)
   }
   bool suspend = false;
   if (rrcReleaseIEs) {
-    if (rrcReleaseIEs->redirectedCarrierInfo)
+    const NR_RedirectedCarrierInfo_t *rci = rrcReleaseIEs->redirectedCarrierInfo;
+    if (rci && rci->present == NR_RedirectedCarrierInfo_PR_eutra) {
+      // the E-UTRA stack is another process: the redirection is left to the harness, which watches this log
+      const long *cn = rci->choice.eutra->cnType;
+      const char *cn_type = "absent";
+      if (cn && *cn == NR_RedirectedCarrierInfo_EUTRA__cnType_epc)
+        cn_type = "epc";
+      else if (cn)
+        cn_type = "fiveGC";
+      RRCLOG_A("RRCRelease with redirection to E-UTRA ARFCN %ld, cnType %s\n", rci->choice.eutra->eutraFrequency, cn_type);
+    } else if (rci) {
       RRCLOG_E("redirectedCarrierInfo in RRCRelease not handled\n");
+    }
     if (rrcReleaseIEs->cellReselectionPriorities)
       RRCLOG_E("cellReselectionPriorities in RRCRelease not handled\n");
     if (rrcReleaseIEs->deprioritisationReq)
