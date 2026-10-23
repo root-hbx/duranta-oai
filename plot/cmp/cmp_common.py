@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ntn-ntn"))
-from common import PORT, plt, runs, save, tcp_fields  # noqa: E402
+from common import PORT, plt, runs, save, tcp_fields, tcp_rtt  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -71,9 +71,10 @@ def fig():
   f, ax = plt.subplots(figsize=(3.5, 2.6), constrained_layout=True)
   ax.set_xlabel("Time (s)")
   ax.set_xlim(0, T_RUN)
+  ax.grid(False)
   return f, ax
 
 
-def finish(f, ax, name):
-  ax.legend(loc="center", ncol=1, framealpha=0.6, fontsize=7, handlelength=2.2)
+def finish(f, ax, name, **legend):
+  ax.legend(**legend, ncol=1, framealpha=0.6, fontsize=7, handlelength=2.2)
   save(f, FIGS, name)

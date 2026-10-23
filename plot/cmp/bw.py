@@ -11,4 +11,5 @@ for mode in MODES:
   # below 0 a little: the zero throughput after a lost session stays clear of the x axis
   ax.set_ylim(bottom=-0.5)
   ax.set_ylabel("Throughput (Mbps)")
-  finish(f, ax, f"cmp_bw_{mode}")
+  # lower right, just above the zero throughput after a lost session
+  finish(f, ax, f"cmp_bw_{mode}", loc="lower right", bbox_to_anchor=(1, 0.06))

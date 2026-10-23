@@ -1,11 +1,11 @@
 #!/bin/bash
 # Handover comparison batch (plot/cmp): the four handover kinds in 180 s runs with the same traffic, each TCP dl and
 # ping, RUNS runs, then report.txt in each result directory with one line per run.
-#   LTE/LTE   X2 handover to PCI 11, eNB2 gain ramp from 40 s (lte_tcp.sh, lte_ping.sh), build-lte/pcap-cmp-lte
+#   LTE/LTE   X2 handover to PCI 11, eNB2 up at 36 s, eNB1 down after the handover (lte_tcp.sh, lte_ping.sh), build-lte/pcap-cmp-lte
 #   NTN/NTN   TWO_SAT CHO, trace time 90-271 s (ntn_tcp.sh, ntn_ping.sh), TRANS and REGEN, build/pcap-cmp-cho
 #   LTE/NTN   TWO_SAT RAT change at the CHO time, session stage (xrat_tcp.sh, xrat_ping.sh lte2ntn and ntn2lte),
 #   NTN/LTE   TRANS and REGEN, build/pcap-cmp-xrat
-#   [RUNS=3] cmp_batch.sh
+#   [RUNS=3] [PARTS="lte ntn"] cmp_batch.sh   PARTS: lte (LTE/LTE), ntn (the others)
 # Exit status: the number of failed invocations.
 
 cd "$(dirname "$0")"
@@ -31,8 +31,9 @@ report() { for d in $(ls -d $1/*-[0-9]-*/ | sort); do
   fi
 done; }
 
-for t in ./lte_tcp.sh ./lte_ping.sh; do step PCAP_DIR=$lte T_PRE=40 T_END=180 $t connected $RUNS; done
-for regen in "" 1; do
+parts=${PARTS:-lte ntn}
+[[ $parts == *lte* ]] && for t in ./lte_tcp.sh ./lte_ping.sh; do step PCAP_DIR=$lte T_PRE=36 T_END=180 $t connected $RUNS; done
+[[ $parts == *ntn* ]] && for regen in "" 1; do
   for t in ./ntn_tcp.sh ./ntn_ping.sh; do step PCAP_DIR=$cho TWO_SAT=1 REGEN=$regen END=271 $t cho $RUNS; done
   docker rm -f cap-ue cap-sgi cap-mac cap-ngap cap-core >/dev/null 2>&1; ./ntn.sh down >/dev/null 2>&1
   for d in lte2ntn ntn2lte; do

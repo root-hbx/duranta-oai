@@ -4,8 +4,8 @@
 #   traffic_stop  stop it
 #   report        print the summary of $out
 # Runs: base (no handover, T_BASE s), connected (T_PRE, X2 handover to PCI 11, T_POST, back to PCI 10, T_POST; with
-# T_END set, only the handover to PCI 11, eNB1 down to -20 dB in 10 s as the UE moves into the cell of PCI 11, then
-# until T_END s after the traffic start), idle (attach via eNB1, T_PRE,
+# T_END set, at T_PRE eNB2 -20 -> SWAP_GAIN dB, the UE hands over to PCI 11 on its own, then eNB1 -> -20 dB, until
+# T_END s after the traffic start), idle (attach via eNB1, T_PRE,
 # UE restart, attach via eNB2, T_POST).
 # One directory per run under $PCAP_DIR/<KIND>-<exp>-<run>-<time>, then a tarball per invocation.
 # Captures: core (S1/X2/GTP/PFCP/Diameter), mac (OPT MAC PDUs of all nodes, UDP 9999), sgi (PGW-U ogstun), ue (UE netns).
@@ -18,9 +18,15 @@ core_if=br-$(docker network inspect -f '{{.Id}}' docker_open5gs_default | cut -c
 
 # ramp eNB2 until the handover to PCI $1; the gains then stay at the cell edge
 ho() { ev "trigger ho $1"; ev "$(./lte.sh ho $1)"; }
-# into the target cell after the handover to PCI 11: eNB1 4 dB weaker every 2 s, to -20 dB
-into_target() { for g in -4 -8 -12 -16 -20; do tn lte-enb1 "rfsimu setbeamgains $g" >/dev/null; sleep 2; done
-  ev "eNB1 at -20 dB"; }
+# swap <pci>: eNB2 jumps to SWAP_GAIN dB (A3 offset + hysteresis is 1 dB), after the handover eNB1 drops to -20 dB, so
+# the two eNBs interfere only until the handover (a slow source fade makes the handover command too late)
+swap() { local n=$(docker logs lte-ue 2>&1 | grep -c "handover to PCI $1" || true) end=$((SECONDS + 20)) ho=
+  tn lte-enb2 "rfsimu setbeamgains ${SWAP_GAIN:-1.5}" >/dev/null; ev "eNB2 at ${SWAP_GAIN:-1.5} dB"
+  while [ -z "$ho" ] && [ $SECONDS -lt $end ]; do
+    [ $(docker logs lte-ue 2>&1 | grep -c "handover to PCI $1") -le $n ] || { ho=1; ev "handover to PCI $1"; }
+  done
+  [ -n "$ho" ] || ev "no handover"
+  tn lte-enb1 "rfsimu setbeamgains -20" >/dev/null; ev "eNB1 at -20 dB"; }
 ev() { echo "$(date +%s.%3N) $*" | tee -a $out/events.txt; }
 # cap <name> <net> <iface> <filter> [snaplen]
 cap() { docker run -d --rm --name cap-$1 --net $2 --cap-add NET_ADMIN --cap-add NET_RAW -v $out:/cap \
@@ -41,7 +47,7 @@ start() { out=$PCAP_DIR/$KIND-$1-$2-$(date +%m%d-%H%M%S); mkdir -p $out; suffix=
 
 run_connected() { ./lte.sh connected; start $1 $2; cap_ue ''; sleep 1; traffic; local t0=$(date +%s)
   if [ $1 = base ]; then sleep $T_BASE
-  elif [ -n "$T_END" ]; then sleep $T_PRE; ho 11; into_target; local s=$(( t0 + T_END - $(date +%s) )); [ $s -le 0 ] || sleep $s
+  elif [ -n "$T_END" ]; then sleep $T_PRE; swap 11; local s=$(( t0 + T_END - $(date +%s) )); [ $s -le 0 ] || sleep $s
   else sleep $T_PRE; ho 11; sleep $T_POST; ho 10; sleep $T_POST; fi
   finish; }
 
