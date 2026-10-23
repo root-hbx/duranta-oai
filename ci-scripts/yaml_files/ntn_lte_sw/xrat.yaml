@@ -1,8 +1,9 @@
-# LTE <-> NR NTN: one dual-mode UE container, one eNB and one NTN gNB (single satellite), against the shared Open5GS
+# LTE <-> NR NTN: one dual-mode UE container, one eNB and one NTN gNB (two with TWO_SAT), against the shared Open5GS
 # (EPC and 5GC with the same subscriber). xrat.sh runs the LTE and NR UE processes in xr-ue one after the other: the
 # applications and their sockets stay in the same network namespace across the RAT change, as on a real phone.
-# rfsim: the LTE UE is the server of the eNB, the NR UE a client of the gNB (ntn.sh link topology); each link's trace
-# clock starts when the NR UE connects, as in ntn.sh link, so the SIB19 calibration of ntn.yaml holds.
+# rfsim: the LTE UE is the server of the eNB, the NR UE a client of ntn-gnb1 (ntn.sh link topology); each link's trace
+# clock starts when the NR UE connects, as in ntn.sh link, so the SIB19 calibration of ntn.yaml holds. With TWO_SAT
+# (xrat.sh) the NR UE is the server (port 4044) of ntn-gnb1 and ntn-gnb2, as in the CHO runs.
 services:
   xr-ue:
     extends: {file: ntn.yaml, service: nr-ue}
@@ -24,6 +25,12 @@ services:
 
   ntn-gnb1:
     extends: {file: ntn.yaml, service: ntn-gnb1}
+    volumes:
+      - ../../..:/oai-ran:ro
+      - ${NR_BUILD:-../../../build}:/build
+
+  ntn-gnb2:
+    extends: {file: ntn.yaml, service: ntn-gnb2}
     volumes:
       - ../../..:/oai-ran:ro
       - ${NR_BUILD:-../../../build}:/build

@@ -3,8 +3,10 @@
 #   traffic <n>   start the traffic towards the current UE (n: empty, or 1 / 2 before / after the idle break)
 #   traffic_stop  stop it
 #   report        print the summary of $out
-# Runs: base (no handover, T_BASE s), connected (T_PRE, X2 handover to PCI 11, T_POST, back to PCI 10, T_POST),
-# idle (attach via eNB1, T_PRE, UE restart, attach via eNB2, T_POST).
+# Runs: base (no handover, T_BASE s), connected (T_PRE, X2 handover to PCI 11, T_POST, back to PCI 10, T_POST; with
+# T_END set, only the handover to PCI 11, eNB1 down to -20 dB in 10 s as the UE moves into the cell of PCI 11, then
+# until T_END s after the traffic start), idle (attach via eNB1, T_PRE,
+# UE restart, attach via eNB2, T_POST).
 # One directory per run under $PCAP_DIR/<KIND>-<exp>-<run>-<time>, then a tarball per invocation.
 # Captures: core (S1/X2/GTP/PFCP/Diameter), mac (OPT MAC PDUs of all nodes, UDP 9999), sgi (PGW-U ogstun), ue (UE netns).
 # OPT goes to the bridge gateway: a local --opt.ip binds UDP 9999, which the LTE UE needs for its PDCP PC5 socket.
@@ -16,6 +18,9 @@ core_if=br-$(docker network inspect -f '{{.Id}}' docker_open5gs_default | cut -c
 
 # ramp eNB2 until the handover to PCI $1; the gains then stay at the cell edge
 ho() { ev "trigger ho $1"; ev "$(./lte.sh ho $1)"; }
+# into the target cell after the handover to PCI 11: eNB1 4 dB weaker every 2 s, to -20 dB
+into_target() { for g in -4 -8 -12 -16 -20; do tn lte-enb1 "rfsimu setbeamgains $g" >/dev/null; sleep 2; done
+  ev "eNB1 at -20 dB"; }
 ev() { echo "$(date +%s.%3N) $*" | tee -a $out/events.txt; }
 # cap <name> <net> <iface> <filter> [snaplen]
 cap() { docker run -d --rm --name cap-$1 --net $2 --cap-add NET_ADMIN --cap-add NET_RAW -v $out:/cap \
@@ -34,9 +39,10 @@ start() { out=$PCAP_DIR/$KIND-$1-$2-$(date +%m%d-%H%M%S); mkdir -p $out; suffix=
   cap core host $core_if 'not tcp port 4043 and not udp port 9999' $SNAP
   cap mac host $core_if 'udp port 9999' $MAC_SNAP; cap sgi container:upf ogstun "$SGI_FILTER" $SNAP; }
 
-run_connected() { ./lte.sh connected; start $1 $2; cap_ue ''; sleep 1; traffic
-  if [ $1 = base ]; then sleep $T_BASE; else
-    sleep $T_PRE; ho 11; sleep $T_POST; ho 10; sleep $T_POST; fi
+run_connected() { ./lte.sh connected; start $1 $2; cap_ue ''; sleep 1; traffic; local t0=$(date +%s)
+  if [ $1 = base ]; then sleep $T_BASE
+  elif [ -n "$T_END" ]; then sleep $T_PRE; ho 11; into_target; local s=$(( t0 + T_END - $(date +%s) )); [ $s -le 0 ] || sleep $s
+  else sleep $T_PRE; ho 11; sleep $T_POST; ho 10; sleep $T_POST; fi
   finish; }
 
 run_idle() { late_net; reset; start idle $1

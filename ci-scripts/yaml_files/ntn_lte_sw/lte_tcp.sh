@@ -2,13 +2,15 @@
 # TCP during LTE mobility, with packet captures (lte_cap.sh), under build-lte/pcap/tcp-<dl|ul>-*
 #   [DIR=dl|ul] lte_tcp.sh base [runs]        RRC_CONNECTED on eNB1, no handover (40 s)
 #   [DIR=dl|ul] lte_tcp.sh connected [runs]   X2 handover to PCI 11 and back to PCI 10
+#   T_PRE=<s> T_END=<s> [DIR=dl|ul] lte_tcp.sh connected [runs]   only the handover to PCI 11 after T_PRE s, end T_END s
+#                         after the traffic start
 #   [DIR=dl|ul] lte_tcp.sh idle [runs]        attach via eNB1, UE restart, attach via eNB2 (break-before-make)
 # Traffic: iperf3 from the PGW-U (client: iperf_core) to the UE (server: iperf_ue), 100 Mbit/s offered, 100 ms reports.
 # DIR=dl (default) the PGW-U sends; DIR=ul reverse mode (-R), the UE sends. Captures keep full packets (MAC: 300 B);
 # thr_rx.csv is the receiver goodput per 100 ms (dl: ue*.pcap, ul: sgi.pcap).
 
 DIR=${DIR:-dl}
-KIND=tcp-$DIR SGI_FILTER='tcp port 5201' SNAP=0 MAC_SNAP=300 T_BASE=40 T_PRE=10 T_POST=15
+KIND=tcp-$DIR SGI_FILTER='tcp port 5201' SNAP=0 MAC_SNAP=300 T_BASE=40 T_PRE=${T_PRE:-10} T_POST=15
 # rx: receiver captures and their data filter; tx: sender captures and the pattern of their data packets
 if [ $DIR = ul ]; then rev=-R rx='sgi.pcap' data='tcp src port 5201' tx='ue*.pcap' txdata='IP [0-9.]+[.]5201 >'
 else rev= rx='ue*.pcap' data='tcp dst port 5201' tx='sgi.pcap' txdata='> [0-9.]+[.]5201:'; fi
