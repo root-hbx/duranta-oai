@@ -170,10 +170,28 @@ int decode_attach_accept(attach_accept_msg *attach_accept, uint8_t *buffer, uint
       attach_accept->presencemask |= ATTACH_ACCEPT_ADDITIONAL_UPDATE_RESULT_PRESENT;
       break;
 
-    default:
-      errorCodeDecoder = TLV_DECODE_UNEXPECTED_IEI;
-      LOG_TRACE(WARNING, "DECODE_UNEXPECTED_IEI %x (4 bits)", ieiDecoded);
-      return TLV_DECODE_UNEXPECTED_IEI;
+    default: {
+      /* 24.301 7.6.1: ignore unknown IEs of the non-imperative part (e.g. network policy, 9.9.3.52); skip
+       * by format (24.007): type 1 one octet, TLV-E (IEI 0x7x) 16-bit length, else 8-bit length */
+      int left = len - decoded;
+      int skip = left + 1;
+      if (ieiDecoded >= 0x80) {
+        skip = 1;
+      } else if ((ieiDecoded & 0xf0) == 0x70) {
+        if (left >= 3)
+          skip = 3 + ((buffer[decoded + 1] << 8) | buffer[decoded + 2]);
+      } else if (left >= 2) {
+        skip = 2 + buffer[decoded + 1];
+      }
+      if (skip > left) {
+        errorCodeDecoder = TLV_DECODE_UNEXPECTED_IEI;
+        LOG_TRACE(WARNING, "DECODE_UNEXPECTED_IEI %x (4 bits)", ieiDecoded);
+        return TLV_DECODE_UNEXPECTED_IEI;
+      }
+      LOG_TRACE(WARNING, "Skip unknown IEI %x (%d octets)", ieiDecoded, skip);
+      decoded += skip;
+      break;
+    }
     }
   }
   LOG_TRACE(WARNING, "DECODED %d\n", decoded);
