@@ -22,17 +22,19 @@
 # ntn2lte: from sat 0, traffic at trace time T_START (91 s), change at T_CHANGE (131 s, the CHO execution). lte2ntn: to
 # sat 1, the change T_CHANGE - T_START s after the traffic start, the NR UE starts on traces cut at T_CHANGE. The run
 # ends T_RUN (180 s) after the traffic start.
+# IWK=1: the target UE asks to keep its session (interworking without N26: LTE PDN request type handover, NR PDU
+# session request type existing), which CORE=private (core.sh) honours with the source IP.
 # One directory per run under $PCAP_DIR/<KIND>-<lte2ntn|ntn2lte>-<trans|regen>-<stage>-<run>-<time>, then a tarball
 # per invocation. Captures: core (S1AP/NGAP/GTP/PFCP/GTPv2), mac (OPT MAC PDUs, first 300 B), sgi (UPF ogstun),
 # ue (xr-ue netns).
 source "$(dirname "$0")/ntn.sh"
 repo=$(cd ../../.. && pwd)
 mode=trans; [ -n "$REGEN" ] && mode=regen
-export OPT=${OPT---opt.type wireshark --opt.ip 172.22.0.1}
+export OPT=${OPT---opt.type wireshark --opt.ip $CORE_NET.0.1}
 PCAP_DIR=${PCAP_DIR:-$repo/build/pcap-xrat}
 STAGE=${STAGE:-base} T_PRE=${T_PRE:-10} T_POST=${T_POST:-60}
 T_START=${T_START:-91} T_CHANGE=${T_CHANGE:-131} T_RUN=${T_RUN:-180}
-core_if=br-$(docker network inspect -f '{{.Id}}' docker_open5gs_default | cut -c1-12)
+core_if=br-$(docker network inspect -f '{{.Id}}' $CORE_NETWORK | cut -c1-12)
 radio='not tcp port 4043 and not tcp port 4044 and not udp port 9999 and not tcp port 9090'
 GNSS_ERR=500000  # m, the access stage GNSS position error (x)
 NR_STEPS=("sync|Initial sync successful" "sib19|Found SIB19" "rar|Found RAR with the intended" \
@@ -51,7 +53,7 @@ reset() { dc down 2>/dev/null || true
 ev() { echo "$(date +%s.%3N) $*" | tee -a $out/events.txt; }
 # cap <name> <net> <iface> <filter> [snaplen]
 cap() { docker run -d --rm --name cap-$1 --net $2 --cap-add NET_ADMIN --cap-add NET_RAW -v $out:/cap \
-  --entrypoint tcpdump docker_open5gs -Z root -U -s ${5:-0} -i $3 -w /cap/$1.pcap "$4" >/dev/null; }
+  --entrypoint tcpdump $CORE_IMAGE -Z root -U -s ${5:-0} -i $3 -w /cap/$1.pcap "$4" >/dev/null; }
 uncap() { for c in "$@"; do docker kill -s INT cap-$c >/dev/null 2>&1 || true; done; }
 uelog() { docker exec xr-ue cat /tmp/$1.log 2>/dev/null || true; }
 ue_ip() { docker exec xr-ue ip -br -4 addr show oaitun_ue1 2>/dev/null | awk '{print $3}' | cut -d/ -f1; }
@@ -62,21 +64,21 @@ wait_target() { local p=${NR_STEPS[-1]#*|} end=$(( $(date +%s) + $1 )); [ $tgt =
     docker exec xr-ue grep -q "$p" /tmp/$tgt.log 2>/dev/null && { sleep 1; wait_ip 5; return; }; sleep 0.2; done; return 1; }
 # TWO_SAT: gNB2, the other satellite, joins the NR UE
 join_nbr() { [ -n "$TWO_SAT" ] || return 0
-  dc up -d ntn-gnb2 2>/dev/null; wait_log ntn-gnb2 'Connection to 172.22.0.61' 60 || true; }
+  dc up -d ntn-gnb2 2>/dev/null; wait_log ntn-gnb2 "Connection to $CORE_NET.0.61" 60 || true; }
 
 # the UE processes in xr-ue, log in /tmp/<lte|nr>.log; nr_up <GNSS x error (m)>
 lte_up() { docker exec -d xr-ue bash -c 'mkdir -p /tmp/lte && cd /tmp/lte &&
   /build-lte/conf2uedata -c $CONF/lteue.usim-open5gs.conf -o . > /dev/null &&
   exec /build-lte/lte-uesoftmodem -O $CONF/lteue.rfsim.conf --rfsim --rfsimulator.[0].serveraddr server \
   --rfsimulator.[0].sync_clients 1 -C 2680000000 -r 25 --ue-rxgain 140 --ue-txgain 120 \
-  --log_config.global_log_options level,nocolor,time $OPT > /tmp/lte.log 2>&1'; }
+  --log_config.global_log_options level,nocolor,time $OPT '"$iwk"' > /tmp/lte.log 2>&1'; }
 nr_up() { docker exec -d xr-ue bash -c "exec /build/nr-uesoftmodem -O \$CONF/nrue.uicc.ntn-leo.conf --rfsim \
   --rfsimulator.[0].serveraddr $NR_RFSIM \$PROP_DELAY \$CHAN --channelmod.modellist_rfsimu_1.[0].sat_trace_file \$TRACE0 \
   --position0.x $(awk "BEGIN { printf \"%.1f\", -3310204.0 + $1 }") --position0.y -5006785.1 --position0.z 2157610.7 \
   --uicc0.imsi 001010000000001 --uicc0.key 465B5CE8B199B49FAA5F0A2EE238A6BC \
   --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet \
   --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} \
-  --cont-fo-comp ${UE_FO_COMP:-2} ${UE_GNSS:-} \$LOG \$OPT \$EXTRA > /tmp/nr.log 2>&1"; }
+  --cont-fo-comp ${UE_FO_COMP:-2} ${UE_GNSS:-} $iwk \$LOG \$OPT \$EXTRA > /tmp/nr.log 2>&1"; }
 # trace time (s) of the NR UE (rfsim server with TWO_SAT)
 utrace() { tn xr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
 wait_utrace() { while awk "BEGIN { exit !($(utrace) < $1) }"; do sleep 0.2; done; }
@@ -112,7 +114,7 @@ wait_redirect() { local p=${LTE_REDIR[1]#*|} end=$(( $(date +%s) + $1 )); [ $src
   while [ $(date +%s) -lt $end ]; do docker exec xr-ue grep -q "$p" /tmp/$src.log 2>/dev/null && return; sleep 0.1; done
   return 1; }
 # packets of the source IP traffic at the receiver after the change (2 s grace for the ones in flight)
-after_change() { docker run --rm -v $out:/cap --entrypoint tcpdump docker_open5gs -r /cap/$rx -tt -nq \
+after_change() { docker run --rm -v $out:/cap --entrypoint tcpdump $CORE_IMAGE -r /cap/$rx -tt -nq \
     "($data) and host $ip0" 2>/dev/null |
   awk -v c=$t_change '$1 > c + 2 { n++; l = $1 } END { if (n) printf "%d packets, last at +%.1f s\n", n, l - c
     else print "none" }'; }
@@ -133,19 +135,20 @@ finish() { traffic_stop; sleep 1
         local n; [ $tgt = nr ] && n=NR_STEPS || n=LTE_STEPS
         echo "target $tgt steps: $(steps $n xr-ue-$tgt)"
         echo "target IP ${ip1:-none}${ip1:+, $([ "$ip1" = "$ip0" ] && echo same || echo different), UPF probe $probe}"
-        echo "source session at the SMF: $(docker logs --since ${t_change%.*} smf 2>&1 | grep -q "Removed Session.*IPv4:\[$ip0\]" &&
+        echo "source session at the SMF: $(docker logs --since ${t_change%.*} ${CORE_CT}smf 2>&1 | grep -qE "Removed Session.*IPv4:\[($ip0)?\]" &&
           echo removed || echo kept)"
       fi
     fi
     report; } | tee $out/summary.txt
-  docker run --rm -v $out:/cap --entrypoint chown docker_open5gs -R $(id -u):$(id -g) /cap; }
+  docker run --rm -v $out:/cap --entrypoint chown $CORE_IMAGE -R $(id -u):$(id -g) /cap; }
 
-run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe=
+run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk=
   attach_source || return 1
+  [ -z "$IWK" ] || iwk=--iwk-without-n26
   [ -z "$TWO_SAT" ] || [ $src = lte ] || wait_utrace $T_START
   out=$PCAP_DIR/$KIND-$dir-$mode-$STAGE-$r-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
   cap core host $core_if 'not tcp port 4043 and not tcp port 4044 and not udp port 9999' $SNAP
-  cap mac host $core_if 'udp port 9999' 300; cap sgi container:upf ogstun "$SGI_FILTER" $SNAP
+  cap mac host $core_if 'udp port 9999' 300; cap sgi container:${CORE_CT}upf ogstun "$SGI_FILTER" $SNAP
   cap ue container:xr-ue any "$radio" $SNAP; sleep 1
   ip0=$ip; ev "UE IP $ip ($src)"; traffic; t0=$(date +%s.%N)
   if [ -n "$TWO_SAT" ]; then
@@ -168,7 +171,7 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe=
   esac
   if [ -n "$tgt" ]; then
     if wait_target $(left); then ip1=$ip; ev "target UE IP $ip1"; [ $tgt = lte ] || join_nbr
-      probe=$(docker exec upf ping -c 5 -i 0.2 -W 2 $ip1 | awk '/transmitted/ { print $4 "/" $1 }'); ev "UPF probe $probe"
+      probe=$(docker exec ${CORE_CT}upf ping -c 5 -i 0.2 -W 2 $ip1 | awk '/transmitted/ { print $4 "/" $1 }'); ev "UPF probe $probe"
     fi
   fi
   sleep $(left)
@@ -183,7 +186,7 @@ if [ -n "$TWO_SAT" ]; then
   # the NR UE is the rfsim server on port 4044 (the LTE UE has 4043); gNB2 NBR_ATT dB weaker on both sides from the
   # start (UE channel models 1/2 are gNB1/gNB2, gNB model 0 is the UE)
   gnbs="ntn-gnb1 ntn-gnb2" NR_RFSIM="server --rfsimulator.[0].serverport 4044" att=-${NBR_ATT:-20}
-  export GNB1_RFSIM=172.22.0.61 GNB2_RFSIM=172.22.0.61 GNB1_EXTRA="--rfsimulator.[0].serverport 4044"
+  export GNB1_RFSIM=$CORE_NET.0.61 GNB2_RFSIM=$CORE_NET.0.61 GNB1_EXTRA="--rfsimulator.[0].serverport 4044"
   export GNB2_EXTRA="--rfsimulator.[0].serverport 4044 --channelmod.modellist_rfsimu_1.[0].ploss_dB $att"
   export UE_EXTRA="--channelmod.modellist_rfsimu_1.[2].ploss_dB $att"
   if [ $src = lte ]; then

@@ -8,10 +8,10 @@
 KIND=tcp-dl SGI_FILTER='tcp port 5201' SNAP=0 rx=ue.pcap data='tcp dst port 5201'
 traffic() { docker exec xr-ue iperf3 -s -1 -i 0.1 --forceflush > $out/iperf_ue.txt 2>&1 & sleep 1
   ev "iperf3 dl with $ip"
-  docker exec upf iperf3 -c $ip -t 600 -b 100M -i 0.1 --forceflush > $out/iperf_core.txt 2>&1 & }
-traffic_stop() { docker exec upf pkill -INT -f 'iperf3 -c' || true; docker exec xr-ue pkill -INT iperf3 2>/dev/null || true; }
+  docker exec ${CORE_CT}upf iperf3 -c $ip -t 600 -b 100M -i 0.1 --forceflush > $out/iperf_core.txt 2>&1 & }
+traffic_stop() { docker exec ${CORE_CT}upf pkill -INT -f 'iperf3 -c' || true; docker exec xr-ue pkill -INT iperf3 2>/dev/null || true; }
 # data gaps over 100 ms at the UE (gaps less than 20 ms apart merged), goodput per second, iperf3 totals
-report() { docker run --rm -v $out:/cap --entrypoint tcpdump docker_open5gs -r /cap/$rx -tt -nq "$data" 2>/dev/null |
+report() { docker run --rm -v $out:/cap --entrypoint tcpdump $CORE_IMAGE -r /cap/$rx -tt -nq "$data" 2>/dev/null |
   awk -v csv=$out/thr_rx.csv 'function flush() { if (gn) printf "gap %5.0f ms  %.3f -> %.3f  (%d)\n", (ge - gs) * 1000, gs, ge, gn; gn = 0 }
     $NF > 0 { t = $1; b = int(t * 10); B[b] += $NF; if (!b0) b0 = b; b1 = b
       if (p && t - p > 0.1) { if (gn && p - ge < 0.02) ge = t; else { flush(); gs = p; ge = t }; gn++ }

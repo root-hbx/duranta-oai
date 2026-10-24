@@ -30,6 +30,9 @@ Description Defines functions executed at the ESM Service Access
 
 #include <string.h> // strlen
 
+/* Moved from 5GS without N26: PDN connections with request type "handover" (TS 24.301 9.9.4.14) */
+int nas_iwk_without_n26 = 0;
+
 /****************************************************************************/
 /****************  E X T E R N A L    D E F I N I T I O N S  ****************/
 /****************************************************************************/
@@ -128,6 +131,8 @@ int esm_send_pdn_connectivity_request(int pti, bool is_emergency, int pdn_type,
   /* Mandatory - PDN connectivity request type */
   if (is_emergency) {
     msg->requesttype = REQUEST_TYPE_EMERGENCY;
+  } else if (nas_iwk_without_n26) {
+    msg->requesttype = REQUEST_TYPE_HANDOVER;
   } else {
     msg->requesttype = REQUEST_TYPE_INITIAL_REQUEST;
   }

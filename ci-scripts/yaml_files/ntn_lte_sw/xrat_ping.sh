@@ -5,8 +5,8 @@
 # Traffic: ICMP every 10 ms from the UPF to the source UE IP (ping_dl): it stops when that IP is no longer the UE's.
 
 KIND=ping SGI_FILTER=icmp SNAP=0 rx=sgi.pcap data="icmp[icmptype] = icmp-echoreply"
-traffic() { ev "ping with $ip"; docker exec upf ping -i 0.01 -D -O $ip > $out/ping_dl.txt 2>&1 & }
-traffic_stop() { docker exec upf pkill -INT -f 'ping -i 0.01' || true; }
+traffic() { ev "ping with $ip"; docker exec ${CORE_CT}upf ping -i 0.01 -D -O $ip > $out/ping_dl.txt 2>&1 & }
+traffic_stop() { docker exec ${CORE_CT}upf pkill -INT -f 'ping -i 0.01' || true; }
 # runs of lost requests (send time of the first one), reply gaps over 200 ms, RTT per 5 s (mean/max), ping statistics
 report() { f=$out/ping_dl.txt; awk -F'[][]' '{ split($3, q, "icmp_seq="); s = q[2] + 0 }
     /no answer yet/ { if (!(s in T)) T[s] = $2 }

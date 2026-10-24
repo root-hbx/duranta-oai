@@ -16,9 +16,9 @@ N=${1:-20} GAP=${GAP:-4} seg=0
 
 up() { for i in 1 2 3; do ./ntn.sh connected && break; echo "retry ntn.sh connected"; done
   docker exec -d nr-ue sh -c "ping -D -I oaitun_ue1 -i 0.2 -W 1 192.168.96.1 >> /tmp/ping.txt"; serving=0; load; }
-load() { docker exec upf pkill -f 'iperf3 -c' || true; [ -z "$LOAD" ] && return
+load() { docker exec ${CORE_CT}upf pkill -f 'iperf3 -c' || true; [ -z "$LOAD" ] && return
   ip=$(docker exec nr-ue ip -br -4 addr show oaitun_ue1 | awk '{print $3}' | cut -d/ -f1); docker exec -d nr-ue iperf3 -s; sleep 1
-  local rev=; [ $LOAD = ul ] && rev=-R; docker exec -d upf iperf3 -c $ip $rev -t 3600 -b 100M; }
+  local rev=; [ $LOAD = ul ] && rev=-R; docker exec -d ${CORE_CT}upf iperf3 -c $ip $rev -t 3600 -b 100M; }
 wait_log_n() { for i in $(seq 20); do [ $(count $1 "$2") -gt $3 ] && return; sleep 0.25; done; return 1; }
 logs() { seg=$((seg + 1)); mkdir -p $out/logs/$seg
   for n in nr-ue ntn-gnb1 ntn-gnb2; do docker logs $n > $out/logs/$seg/$n.log 2>&1 || true; done

@@ -10,8 +10,8 @@
 KIND=ping SGI_FILTER=icmp SNAP=0 T_BASE=40 T_PRE=10 T_POST=15
 traffic() { ev "ping with $ip"
   docker exec nr-ue ping -I oaitun_ue1 -i 0.01 -D -O 192.168.96.1 > $out/ping_ul.txt 2>&1 &
-  docker exec upf ping -i 0.01 -D -O $ip > $out/ping_dl.txt 2>&1 & }
-traffic_stop() { docker exec nr-ue pkill -INT ping 2>/dev/null; docker exec upf pkill -INT -f 'ping -i 0.01' || true; }
+  docker exec ${CORE_CT}upf ping -i 0.01 -D -O $ip > $out/ping_dl.txt 2>&1 & }
+traffic_stop() { docker exec nr-ue pkill -INT ping 2>/dev/null; docker exec ${CORE_CT}upf pkill -INT -f 'ping -i 0.01' || true; }
 # runs of lost requests (send time of the first one), reply gaps over 200 ms (the RTT jitters by ~100 ms),
 # RTT per 5 s (mean/max) and the ping statistics
 report() { for f in $out/ping_*.txt; do echo "== ${f##*/}"; awk -F'[][]' '{ split($3, q, "icmp_seq="); s = q[2] + 0 }

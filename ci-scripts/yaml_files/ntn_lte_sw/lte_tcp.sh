@@ -17,10 +17,10 @@ else rev= rx='ue*.pcap' data='tcp dst port 5201' tx='sgi.pcap' txdata='> [0-9.]+
 traffic() { ue_ip
   docker exec lte-ue iperf3 -s -1 -i 0.1 --forceflush > $out/iperf_ue$1.txt 2>&1 & sleep 1
   ev "iperf3 $DIR with $ip"
-  docker exec upf iperf3 -c $ip $rev -t 600 -b 100M -i 0.1 --forceflush > $out/iperf_core$1.txt 2>&1 & }
-traffic_stop() { docker exec upf pkill -INT -f 'iperf3 -c' || true; docker exec lte-ue pkill -INT iperf3 2>/dev/null || true; }
+  docker exec ${CORE_CT}upf iperf3 -c $ip $rev -t 600 -b 100M -i 0.1 --forceflush > $out/iperf_core$1.txt 2>&1 & }
+traffic_stop() { docker exec ${CORE_CT}upf pkill -INT -f 'iperf3 -c' || true; docker exec lte-ue pkill -INT iperf3 2>/dev/null || true; }
 # tcpdump -r <files> <args...>: the packets of several captures (idle has ue1/ue2)
-dump() { local f=$1; shift; docker run --rm -v $out:/cap --entrypoint sh docker_open5gs -c \
+dump() { local f=$1; shift; docker run --rm -v $out:/cap --entrypoint sh $CORE_IMAGE -c \
   'f=$1; shift; for p in /cap/$f; do tcpdump -r $p "$@" 2>/dev/null; done' sh "$f" "$@"; }
 # data gaps over 100 ms at the receiver (gaps less than 20 ms apart merged), goodput per second, iperf3 totals,
 # RTT at the sender from the TCP timestamps (first data packet with a TSval to the first ACK echoing it)

@@ -67,6 +67,7 @@
 #define CONFIG_HLP_UENANTR       "set UE number of rx antennas\n"
 #define CONFIG_HLP_UENANTT       "set UE number of tx antennas\n"
 #define CONFIG_HLP_UESCAN        "set UE to scan around carrier\n"
+#define CONFIG_HLP_IWK_N26       "UE moved from 5GS without N26: request the PDN connections as handover (keep the IP)\n"
 #define CONFIG_HLP_EMULIFACE     "Set the interface name for the multicast transport for emulation mode (e.g. eth0, lo, etc.)  \n"
 #define CONFIG_HLP_PRB           "Set the PRB, valid values: 6, 25, 50, 100  \n"
 #define CONFIG_HLP_DLSHIFT       "dynamic shift for LLR compuation for TM3/4 (default 0)\n"
@@ -98,6 +99,7 @@
     {"T" ,                CONFIG_HLP_TDD,         PARAMFLAG_BOOL,  .iptr=&tddflag,                      .defintval=0,          TYPE_INT,      0},   \
     {"ue-idx-standalone", NULL,                   0,               .u16ptr=&ue_idx_standalone,          .defuintval=0xFFFF,    TYPE_UINT16,   0},   \
     {"node-number",       NULL,                   0,               .u16ptr=&node_number,                .defuintval=2,         TYPE_UINT16,   0},   \
+    {"iwk-without-n26",   CONFIG_HLP_IWK_N26,     PARAMFLAG_BOOL,  .iptr=&nas_iwk_without_n26,          .defintval=0,          TYPE_INT,      0},   \
   }
 // clang-format on
 
@@ -115,6 +117,7 @@ extern int sync_var;
 
 extern uint16_t ue_id_g;
 extern uint16_t node_number;
+extern int nas_iwk_without_n26;
 
 extern uint64_t downlink_frequency[MAX_NUM_CCs][4];
 extern int64_t uplink_frequency_offset[MAX_NUM_CCs][4];

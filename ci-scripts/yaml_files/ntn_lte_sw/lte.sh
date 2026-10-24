@@ -8,6 +8,7 @@
 #   lte.sh down
 set -e
 cd "$(dirname "$0")"
+source ./core.sh
 dc() { docker compose -p ntn_lte_sw -f lte.yaml "$@"; }
 tn() { docker exec $1 bash -c "exec 3<>/dev/tcp/127.0.0.1/9090; echo '$2' >&3; timeout 1 cat <&3" | tr -d '\r'; }
 wait_log() { for i in $(seq ${3:-60}); do docker logs $1 2>&1 | grep -q "$2" && return; sleep 1; done; echo "timeout: $1 '$2'"; return 1; }
@@ -37,7 +38,7 @@ case $1 in
     late_net; reset
     dc up -d lte-ue; sleep 3; dc up -d lte-enb1; attached; ping_ue 3
     t0=$(date +%s); dc rm -sf lte-ue lte-enb1
-    dc up -d lte-ue; sleep 3; ENB2_RFSIM=172.22.0.61 ENB2_GAIN=0 ENB2_X2= dc up -d lte-enb2; attached
+    dc up -d lte-ue; sleep 3; ENB2_RFSIM=$CORE_NET.0.61 ENB2_GAIN=0 ENB2_X2= dc up -d lte-enb2; attached
     echo "eNB1 -> eNB2 took $(( $(date +%s) - t0 )) s"; ping_ue 3 ;;
   ping) ping_ue $2 ;;
   tn) tn $2 "$3" ;;

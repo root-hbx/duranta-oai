@@ -35,6 +35,7 @@ extern uint16_t ue_id_g;
   "entries; omit for no affinity\n"
 #define  CONFIG_HLP_EXTRA_PDU_ID           "ID of an additional PDU session to configure alongside default PDU session\n"
 #define  CONFIG_HLP_DISABLE_BLIND_SEARCH   "Disable blind search for UE searches by neighboring cells\n"
+#define  CONFIG_HLP_IWK_WITHOUT_N26        "UE moved from EPS without N26: request the PDU sessions as existing ones (keep the IP)\n"
 
 /***************************************************************************************************************************************/
 /* command line options definitions, CMDLINE_XXXX_DESC macros are used to initialize paramdef_t arrays which are then used as argument
@@ -87,6 +88,7 @@ extern uint16_t ue_id_g;
   {"actor-affinity",               CONFIG_HLP_ACTOR_AFFINITY,  0,               .strptr=&nrUE_params.actor_affinity,       .defstrval=NULL,   TYPE_STRING,   0}, \
   {"extra-pdu-id",                 CONFIG_HLP_EXTRA_PDU_ID,   0,                .iptr=&nrUE_params.extra_pdu_id,             .defintval=-1,     TYPE_INT,      0}, \
   {"disable-blind-search",         CONFIG_HLP_DISABLE_BLIND_SEARCH, PARAMFLAG_BOOL, .iptr=&nrUE_params.disable_blind_search, .defintval=0,    TYPE_INT,      0}, \
+  {"iwk-without-n26",              CONFIG_HLP_IWK_WITHOUT_N26, PARAMFLAG_BOOL,  .iptr=&nrUE_params.iwk_without_n26,          .defintval=0,      TYPE_INT,      0}, \
 }
 // clang-format on
 
@@ -132,6 +134,7 @@ typedef struct {
   char *actor_affinity;
   int extra_pdu_id;
   int disable_blind_search;
+  int iwk_without_n26;
 } nrUE_params_t;
 extern uint64_t get_nrUE_optmask(void);
 extern uint64_t set_nrUE_optmask(uint64_t bitmask);

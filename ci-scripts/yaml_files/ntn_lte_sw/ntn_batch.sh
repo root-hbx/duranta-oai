@@ -8,6 +8,7 @@
 # on CCCH, LCID 0 / 52, overheard by the source excluded). Exit status: the number of failed runs.
 
 cd "$(dirname "$0")"
+source ./core.sh
 repo=$(cd ../../.. && pwd)
 exp=$1 RUNS=${RUNS:-3} fail=0
 case "$exp" in
@@ -18,8 +19,8 @@ esac
 step() { echo "### $(date +%T) $*"; env "$@" || fail=$((fail + 1)); }
 
 # one line per run from its summary.txt and mac.pcap
-mac_ul='(ip.src == 172.22.0.70 || ip.src == 172.22.0.72) && mac-nr.direction == 0 && mac-nr.rnti-type == 3
-  && !(mac-nr.ulsch.lcid == 0 || mac-nr.ulsch.lcid == 52)'
+mac_ul="(ip.src == $CORE_NET.0.70 || ip.src == $CORE_NET.0.72) && mac-nr.direction == 0 && mac-nr.rnti-type == 3
+  && !(mac-nr.ulsch.lcid == 0 || mac-nr.ulsch.lcid == 52)"
 report() { for d in $(ls -d $PCAP_DIR/*-[0-9]-*/ | sort); do
   mac=$(tshark -r $d/mac.pcap --enable-heuristic mac_nr_udp -Y "$mac_ul" -T fields -e frame.time_epoch -e ip.src \
     2>/dev/null | awk '$2 != p && p { l = l sprintf("%s%.0f", l ? "/" : "", ($1 - t) * 1000) } { p = $2; t = $1 }

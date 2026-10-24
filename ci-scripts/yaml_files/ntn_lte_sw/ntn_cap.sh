@@ -14,9 +14,9 @@
 source "$(dirname "$0")/ntn.sh"
 repo=$(cd ../../.. && pwd)
 mode=trans; [ -n "$REGEN" ] && mode=regen
-export OPT=${OPT---opt.type wireshark --opt.ip 172.22.0.1}
+export OPT=${OPT---opt.type wireshark --opt.ip $CORE_NET.0.1}
 PCAP_DIR=${PCAP_DIR:-$repo/build/pcap-ntn}
-core_if=br-$(docker network inspect -f '{{.Id}}' docker_open5gs_default | cut -c1-12)
+core_if=br-$(docker network inspect -f '{{.Id}}' $CORE_NETWORK | cut -c1-12)
 radio='not tcp port 4043 and not udp port 9999 and not tcp port 9090'
 T_START=${T_START:-90}
 if [ -n "$TWO_SAT" ]; then MAC_SNAP=0; export HO_IF=xn; cho_setup; else MAC_SNAP=300; fi
@@ -25,7 +25,7 @@ ho() { ev "trigger ho $1"; ev "$(./ntn.sh ho $1 2>&1 | tr '\n' ' ')"; }
 ev() { echo "$(date +%s.%3N) $*" | tee -a $out/events.txt; }
 # cap <name> <net> <iface> <filter> [snaplen]
 cap() { docker run -d --rm --name cap-$1 --net $2 --cap-add NET_ADMIN --cap-add NET_RAW -v $out:/cap \
-  --entrypoint tcpdump docker_open5gs -Z root -U -s ${5:-0} -i $3 -w /cap/$1.pcap "$4" >/dev/null; }
+  --entrypoint tcpdump $CORE_IMAGE -Z root -U -s ${5:-0} -i $3 -w /cap/$1.pcap "$4" >/dev/null; }
 uncap() { for c in "$@"; do docker kill -s INT cap-$c >/dev/null 2>&1 || true; done; }
 up() { for i in 1 2 3; do ./ntn.sh connected && return; echo "retry ntn.sh connected"; done; return 1; }
 logs() { mkdir -p $out/logs; for n in "$@"; do docker logs $n > $out/logs/$n.log 2>&1 || true; done; }
@@ -35,7 +35,7 @@ finish() { traffic_stop; sleep 1
       "gNB handover complete: $(cat $out/logs/ntn-gnb*.log | grep -c 'handover for UE .* complete')"
     [ "$1" != cho ] || cho_summary; simwall; report; } |
     tee $out/summary.txt
-  docker run --rm -v $out:/cap --entrypoint chown docker_open5gs -R $(id -u):$(id -g) /cap; }
+  docker run --rm -v $out:/cap --entrypoint chown $CORE_IMAGE -R $(id -u):$(id -g) /cap; }
 
 cho_summary() { local exe=$(grep -m1 'CHO: execute candidate' $out/logs/nr-ue.log || true)
   local done_=$(grep -m1 'Xn handover complete' $out/logs/ntn-gnb2.log || true)
@@ -56,7 +56,7 @@ simwall() { awk '/stats sfn:/ { split($0, a, "sfn: "); s = int(a[2]); t = $1
 run_connected() { up; out=$PCAP_DIR/$KIND-$mode-$1-$2-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
   [ -z "$TWO_SAT" ] || wait_trace $T_START
   cap core host $core_if 'not tcp port 4043 and not udp port 9999' $SNAP; cap ngap host $core_if 'sctp or udp port 8805'
-  cap mac host $core_if 'udp port 9999' $MAC_SNAP; cap sgi container:upf ogstun "$SGI_FILTER" $SNAP
+  cap mac host $core_if 'udp port 9999' $MAC_SNAP; cap sgi container:${CORE_CT}upf ogstun "$SGI_FILTER" $SNAP
   cap ue container:nr-ue any "$radio" $SNAP; sleep 1
   ip=$(docker exec nr-ue ip -br -4 addr show oaitun_ue1 | awk '{print $3}' | cut -d/ -f1); ev "UE IP $ip"; traffic
   if [ -n "$TWO_SAT" ]; then

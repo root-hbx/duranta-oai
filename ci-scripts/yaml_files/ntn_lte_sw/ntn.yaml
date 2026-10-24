@@ -52,7 +52,7 @@ x-gnb: &gnb
       --gNBs.[0].gNB_ID $$GNB_ID --gNBs.[0].nr_cellid $$CELL --gNBs.[0].servingCellConfigCommon.[0].physCellId $$PCI
       --gNBs.[0].servingCellConfigCommon.[0].ssb_PositionsInBurst_Bitmap $$SSB
       --gNBs.[0].servingCellConfigCommon.[0].prach_RootSequenceIndex $$ROOT
-      --gNBs.[0].plmn_list.[0].mcc 1 --gNBs.[0].plmn_list.[0].mnc 1 --gNBs.[0].amf_ip_address.[0].ipv4 172.22.0.10
+      --gNBs.[0].plmn_list.[0].mcc 1 --gNBs.[0].plmn_list.[0].mnc 1 --gNBs.[0].amf_ip_address.[0].ipv4 ${CORE_NET:-172.22}.0.10
       --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NG_AMF $$IP --gNBs.[0].NETWORK_INTERFACES.GNB_IPV4_ADDRESS_FOR_NGU $$IP
       --gNBs.[0].servingCellConfigCommon.[0].ta-Common-r17 ${TA_COMMON:-1865301}
       --gNBs.[0].servingCellConfigCommon.[0].ta-CommonDrift-r17 ${TA_DRIFT:--227522}
@@ -81,10 +81,10 @@ services:
     cpuset: "0-3"
     working_dir: /build/run/nr-ue
     networks:
-      core: {ipv4_address: 172.22.0.71}
+      core: {ipv4_address: "${CORE_NET:-172.22}.0.71"}
     environment:
       <<: *env
-      RFSIM: ${UE_RFSIM:-172.22.0.70}
+      RFSIM: ${UE_RFSIM:-${CORE_NET:-172.22}.0.70}
       TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE1:-orbital_trace_s_300.csv}
       EXTRA: ${UE_EXTRA:-}
     command:
@@ -103,10 +103,10 @@ services:
     cpuset: "4-7"
     working_dir: /build/run/ntn-gnb1
     networks:
-      core: {ipv4_address: 172.22.0.70}
+      core: {ipv4_address: "${CORE_NET:-172.22}.0.70"}
     environment:
       <<: *env
-      IP: 172.22.0.70
+      IP: ${CORE_NET:-172.22}.0.70
       GNB_ID: "0xe00"
       CELL: 12345678
       PCI: ${GNB1_PCI:-0}
@@ -124,18 +124,18 @@ services:
     cpuset: "8-11"
     working_dir: /build/run/ntn-gnb2
     networks:
-      core: {ipv4_address: 172.22.0.72}
+      core: {ipv4_address: "${CORE_NET:-172.22}.0.72"}
     environment:
       <<: *env
-      IP: 172.22.0.72
+      IP: ${CORE_NET:-172.22}.0.72
       GNB_ID: "0xe01"
       CELL: 12345679
       PCI: ${GNB2_PCI:-1}
       SSB: ${GNB2_SSB:-2}
       ROOT: 40
       NEIGHBOURS: 0xe00/12345678/${GNB1_PCI:-0}
-      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip 172.22.0.70
-      RFSIM: ${GNB2_RFSIM:-172.22.0.71}
+      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip ${CORE_NET:-172.22}.0.70
+      RFSIM: ${GNB2_RFSIM:-${CORE_NET:-172.22}.0.71}
       TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE2:-orbital_trace_s_300.csv}
       EXTRA: ${GNB2_EXTRA:-}
 
@@ -146,22 +146,22 @@ services:
     cpuset: "12-15"
     working_dir: /build/run/ntn-gnb3
     networks:
-      core: {ipv4_address: 172.22.0.73}
+      core: {ipv4_address: "${CORE_NET:-172.22}.0.73"}
     environment:
       <<: *env
-      IP: 172.22.0.73
+      IP: ${CORE_NET:-172.22}.0.73
       GNB_ID: "0xe02"
       CELL: 12345680
       PCI: 2
       SSB: 4
       ROOT: 80
       NEIGHBOURS: 0xe00/12345678/${GNB1_PCI:-0}
-      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip 172.22.0.70
-      RFSIM: 172.22.0.71
+      XN_DIAL: --gNBs.[0].Xn_INTERFACE.candidate_gnb_ipv4_address_for_xnc.[0].ip ${CORE_NET:-172.22}.0.70
+      RFSIM: ${CORE_NET:-172.22}.0.71
       TRACE0: /oai-ran/tools/ntn/data/${SAT_TRACE3:-orbital_trace_s_300.csv}
       EXTRA: ${GNB3_EXTRA:-}
 
 networks:
   core:
-    name: docker_open5gs_default
+    name: ${CORE_NETWORK:-docker_open5gs_default}
     external: true

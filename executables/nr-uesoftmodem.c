@@ -341,6 +341,8 @@ int main(int argc, char **argv)
 
   nr_pdcp_layer_init();
   nas_init_nrue(NB_UE_INST);
+  for (int i = 0; i < NB_UE_INST; i++)
+    get_ue_nas_info(i)->iwk_without_n26 = nrUE_params.iwk_without_n26;
 
   nrue_set_ru_params(uniqCfg);
   nrue_set_cell_params(uniqCfg);

@@ -16,6 +16,7 @@
 #   ntn.sh tn <node> <cmd>  telnet command to a softmodem
 set -e
 cd "$(dirname "$0")"
+source ./core.sh
 [ -n "$THREE_SAT" ] && export TWO_SAT=1 SAT_TRACE3=ho_pair_sat2.csv GNB1_NEIGHBOURS=0xe02/12345680/2
 if [ -n "$TWO_SAT" ]; then
   # tools/ntn/calc_ntn_parameters.py for ho_pair_sat0.csv (gNB1 serves at the start)
@@ -50,8 +51,8 @@ gains() { ploss() { tn $1 "channelmod modify $2 ploss $3" 0.2 >/dev/null; }
   if [ -n "$THREE_SAT" ]; then ploss ntn-gnb3 0 ${3:-0} & pids+=" $!"; fi
   wait $pids; }
 # a fresh AMF per run: after a failed handover it may keep the old gNB association and refuse the new gNB2
-amf_restart() { t=$(date +%s); docker restart amf >/dev/null
-  for i in $(seq 30); do docker logs --since $t amf 2>&1 | grep -q 'NF registered' && return; sleep 1; done; echo "timeout: amf"; return 1; }
+amf_restart() { t=$(date +%s); docker restart ${CORE_CT}amf >/dev/null
+  for i in $(seq 30); do docker logs --since $t ${CORE_CT}amf 2>&1 | grep -q 'NF registered' && return; sleep 1; done; echo "timeout: amf"; return 1; }
 # trace time (s) of the UE (rfsim server with "connected")
 trace_time() { tn nr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
 wait_trace() { while awk "BEGIN { exit !($(trace_time) < $1) }"; do sleep 0.2; done; }
@@ -86,12 +87,12 @@ case $1 in
     t0=$(date +%s); dc up -d nr-ue; ue_ip
     echo "PDU session up in $(( $(date +%s) - t0 )) s"; ping_ue 5 ;;
   connected)
-    reset; amf_restart; export UE_RFSIM=server GNB1_RFSIM=172.22.0.71
+    reset; amf_restart; export UE_RFSIM=server GNB1_RFSIM=$CORE_NET.0.71
     dc up -d ntn-gnb1; wait_log ntn-gnb1 'Received NGSetupResponse'
     t0=$(date +%s); dc up -d nr-ue; ue_ip; echo "PDU session up in $(( $(date +%s) - t0 )) s"
     [ "$GNB2" = 0 ] && exit
-    dc up -d ntn-gnb2; wait_log ntn-gnb2 'Connection to 172.22.0.71'
-    if [ -n "$THREE_SAT" ]; then dc up -d ntn-gnb3; wait_log ntn-gnb3 'Connection to 172.22.0.71'; fi
+    dc up -d ntn-gnb2; wait_log ntn-gnb2 "Connection to $CORE_NET.0.71"
+    if [ -n "$THREE_SAT" ]; then dc up -d ntn-gnb3; wait_log ntn-gnb3 "Connection to $CORE_NET.0.71"; fi
     beam 0; echo "gNB2${THREE_SAT:+ and gNB3} on air"
     [ "$HO_IF" = xn ] || exit 0
     wait_log ntn-gnb1 'Xn peer .* setup complete'

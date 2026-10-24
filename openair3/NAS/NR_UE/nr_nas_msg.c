@@ -1973,7 +1973,11 @@ static void generatePduSessionEstablishRequest(nr_ue_nas_t *nas, as_nas_info_t *
   mm_msg->fgspayloadcontainer.payloadcontainercontents.value = req_buffer;
   size += (2 + req_length);
   mm_msg->pdusessionid = pdu_req->pdusession_id;
-  mm_msg->requesttype = 1;
+  if (nas->iwk_without_n26) {
+    mm_msg->requesttype = 2; // existing PDU session
+  } else {
+    mm_msg->requesttype = 1; // initial request
+  }
   size += 3;
   const bool has_nssai_sd = pdu_req->sd != 0xffffff; // 0xffffff means "no SD", TS 23.003
   const size_t nssai_len = has_nssai_sd ? 4 : 1;
