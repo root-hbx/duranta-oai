@@ -1,0 +1,15 @@
+from fixed_common import KINDS, MODES, fig, finish, run1, thpt_run
+
+for mode in MODES:
+  f, ax = fig()
+  for k in KINDS:
+    run = run1("tcp-dl", mode, k)
+    if run is None:
+      continue
+    t, mbps = thpt_run(run, k[4])
+    ax.plot(t, mbps, color=k[1], ls=k[2], lw=1.2, label=k[0])
+  # below 0 a little: the zero throughput after a lost session stays clear of the x axis
+  ax.set_ylim(bottom=-0.5)
+  ax.set_ylabel("Throughput (Mbps)")
+  # lower right, just above the zero throughput after a lost session
+  finish(f, ax, f"cmp_bw_{mode}", loc="lower right", bbox_to_anchor=(1, 0.06))

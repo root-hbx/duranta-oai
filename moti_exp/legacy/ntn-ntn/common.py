@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-BUILD = Path(__file__).resolve().parents[2] / "build"
+BUILD = Path(__file__).resolve().parents[3] / "build"
 PORT = 5201  # iperf3 server on the UE; the UPF is the client
 
 TCP_COLOR = "#2a78d6"

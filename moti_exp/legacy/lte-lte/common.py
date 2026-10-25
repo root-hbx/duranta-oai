@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-BUILD = Path(__file__).resolve().parents[2] / "build-lte"
+BUILD = Path(__file__).resolve().parents[3] / "build-lte"
 PORT = 5201  # iperf3 server on the UE; the PGW-U is the client
 
 TCP_COLOR = "#2a78d6"

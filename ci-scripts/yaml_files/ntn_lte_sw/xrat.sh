@@ -8,11 +8,12 @@
 #   base     no change
 #   trigger  the source cell fades out (gain ramp to -60 dB), nothing else: OAI has no inter-RAT handover command
 #   access   radio loss: the source UE process is killed (no detach) and the target one started at once; an NR target
-#            gets its pre-compensation aids (initial Doppler and drift) but a GNSS position 500 km off
+#            gets its pre-compensation aids (initial Doppler and drift) but a GNSS position GNSS_ERR m off (500000)
 #   session  as access, with a valid GNSS position
 #   redirect the source cell fades out as in trigger; on the A2 report the source asks its core to release the UE
 #            and the release redirects it to the other RAT (no N26: 23.502 4.11.2); once the source UE logs it, the
-#            source process is killed and the target one started as in session
+#            source process is killed and the target one started as in session, an NR one with its GNSS position
+#            GNSS_ERR m off (0; more: a UE that moved since its last fix)
 # then T_POST s. The eNB and the gNB run from the start, as two satellites in view. events.txt: the change, the target
 # UE IP and its probe from the UPF. summary.txt, relative to the change: the source IP traffic after it, the radio link
 # failure of an NR source (trigger), the target access steps (UE log), the target IP and the old session at the SMF.
@@ -24,7 +25,7 @@
 # ends T_RUN (180 s) after the traffic start.
 # IWK=1: the target UE asks to keep its session (interworking without N26: LTE PDN request type handover, NR PDU
 # session request type existing), which CORE=private (core.sh) honours with the source IP.
-# One directory per run under $PCAP_DIR/<KIND>-<lte2ntn|ntn2lte>-<trans|regen>-<stage>-<run>-<time>, then a tarball
+# One directory per run under $PCAP_DIR/<KIND>-<lte2ntn|ntn2lte>-<trans|regen>-<stage>[-TAG]-<run>-<time>, then a tarball
 # per invocation. Captures: core (S1AP/NGAP/GTP/PFCP/GTPv2), mac (OPT MAC PDUs, first 300 B), sgi (UPF ogstun),
 # ue (xr-ue netns).
 source "$(dirname "$0")/ntn.sh"
@@ -36,7 +37,6 @@ STAGE=${STAGE:-base} T_PRE=${T_PRE:-10} T_POST=${T_POST:-60}
 T_START=${T_START:-91} T_CHANGE=${T_CHANGE:-131} T_RUN=${T_RUN:-180}
 core_if=br-$(docker network inspect -f '{{.Id}}' $CORE_NETWORK | cut -c1-12)
 radio='not tcp port 4043 and not tcp port 4044 and not udp port 9999 and not tcp port 9090'
-GNSS_ERR=500000  # m, the access stage GNSS position error (x)
 NR_STEPS=("sync|Initial sync successful" "sib19|Found SIB19" "rar|Found RAR with the intended" \
   "rrc|State = NR_RRC_CONNECTED" "registered|Registration Accept" "ip|PDU Session Establishment Accept")
 LTE_STEPS=("sync|Got synch" "rar|Received RAR" "rrc|State = RRC_CONNECTED" "ip|Send Attach Complete")
@@ -134,6 +134,7 @@ finish() { traffic_stop; sleep 1
       if [ -n "$tgt" ]; then
         local n; [ $tgt = nr ] && n=NR_STEPS || n=LTE_STEPS
         echo "target $tgt steps: $(steps $n xr-ue-$tgt)"
+        [ -z "$gnss" ] || echo "target nr GNSS error: $gnss m"
         echo "target IP ${ip1:-none}${ip1:+, $([ "$ip1" = "$ip0" ] && echo same || echo different), UPF probe $probe}"
         echo "source session at the SMF: $(docker logs --since ${t_change%.*} ${CORE_CT}smf 2>&1 | grep -qE "Removed Session.*IPv4:\[($ip0)?\]" &&
           echo removed || echo kept)"
@@ -142,11 +143,11 @@ finish() { traffic_stop; sleep 1
     report; } | tee $out/summary.txt
   docker run --rm -v $out:/cap --entrypoint chown $CORE_IMAGE -R $(id -u):$(id -g) /cap; }
 
-run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk=
+run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   attach_source || return 1
   [ -z "$IWK" ] || iwk=--iwk-without-n26
   [ -z "$TWO_SAT" ] || [ $src = lte ] || wait_utrace $T_START
-  out=$PCAP_DIR/$KIND-$dir-$mode-$STAGE-$r-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
+  out=$PCAP_DIR/$KIND-$dir-$mode-$STAGE${TAG:+-$TAG}-$r-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
   cap core host $core_if 'not tcp port 4043 and not tcp port 4044 and not udp port 9999' $SNAP
   cap mac host $core_if 'udp port 9999' 300; cap sgi container:${CORE_CT}upf ogstun "$SGI_FILTER" $SNAP
   cap ue container:xr-ue any "$radio" $SNAP; sleep 1
@@ -160,12 +161,13 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk=
     trigger) t_change=$(date +%s.%N); ev "change: source fade-out"; fade ;;
     access|session) tgt=nr; [ $src = nr ] && tgt=lte
       t_change=$(date +%s.%N); ev "change: kill the $src UE, start the $tgt UE"; ue_kill $src
-      if [ $tgt = lte ]; then lte_up; elif [ $STAGE = access ]; then nr_up $GNSS_ERR; else nr_up 0; fi ;;
+      if [ $tgt = lte ]; then lte_up; elif [ $STAGE = access ]; then gnss=${GNSS_ERR:-500000}; nr_up $gnss
+      else gnss=0; nr_up 0; fi ;;
     redirect) t_change=$(date +%s.%N); ev "change: source fade-out"; fade & local fp=$!
       if wait_redirect 30; then tgt=nr; [ $src = nr ] && tgt=lte
         kill $fp 2>/dev/null || true  # the fade only drives the A2 report
         ev "redirection: kill the $src UE, start the $tgt UE"; ue_kill $src
-        if [ $tgt = lte ]; then lte_up; else nr_up 0; fi
+        if [ $tgt = lte ]; then lte_up; else gnss=${GNSS_ERR:-0}; nr_up $gnss; fi
       else ev "no redirection"; fi
       wait $fp ;;
   esac
@@ -210,4 +212,4 @@ if [ $STAGE = redirect ]; then
 fi
 for r in $(seq ${2:-1}); do run $r || echo "run $r: no source attach"; done
 reset
-[ -z "$runs" ] || tar czf $PCAP_DIR/xrat-$KIND-$dir-$mode-$STAGE-$(date +%m%d-%H%M%S).tar.gz -C $PCAP_DIR $runs
+[ -z "$runs" ] || tar czf $PCAP_DIR/xrat-$KIND-$dir-$mode-$STAGE${TAG:+-$TAG}-$(date +%m%d-%H%M%S).tar.gz -C $PCAP_DIR $runs
