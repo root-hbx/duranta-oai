@@ -136,7 +136,7 @@ static void rrc_ue_generate_RRCConnectionReconfigurationComplete(const protocol_
                                                                  const uint8_t Transaction_id,
                                                                  OCTET_STRING_t *str);
 
-static void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t eNB_index );
+static void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t eNB_index, LTE_MeasId_t measId);
 
 static uint8_t check_trigger_meas_event(
   module_id_t module_idP,
@@ -3755,10 +3755,9 @@ void ue_meas_filtering( const protocol_ctxt_t *const ctxt_pP, const uint8_t eNB_
 
 //Below routine implements Measurement Reporting procedure from 36.331 Section 5.5.5
 //-----------------------------------------------------------------------------
-void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t eNB_index ) {
+void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t eNB_index, LTE_MeasId_t measId) {
   uint8_t             buffer[RRC_BUF_SIZE];
   uint8_t             target_eNB_offset;
-  LTE_MeasId_t        measId;
   LTE_PhysCellId_t    targetCellId;
   long             rsrp_t,rsrq_t;
   long             rsrp_s,rsrq_s;
@@ -3770,8 +3769,9 @@ void rrc_ue_generate_MeasurementReport(protocol_ctxt_t *const ctxt_pP, uint8_t e
   target_eNB_offset = UE_rrc_inst[ctxt_pP->module_id].Info[0].handoverTarget; // eNB_offset of target eNB: used to obtain the mod_id of target eNB
 
   for (int i = 0; i < MAX_MEAS_ID; i++) {
-    if (UE_rrc_inst[ctxt_pP->module_id].measReportList[0][i] != NULL) {
-      measId = UE_rrc_inst[ctxt_pP->module_id].measReportList[0][i]->measId;
+    // the triggered measId only: another one still entered (A2) must not take its place
+    if (UE_rrc_inst[ctxt_pP->module_id].measReportList[0][i] != NULL
+        && UE_rrc_inst[ctxt_pP->module_id].measReportList[0][i]->measId == measId) {
       // Note: Values in the meas report have to be the mapped values...to implement binary search for LUT
       rsrp_filtered = UE_rrc_inst[ctxt_pP->module_id].rsrp_db_filtered[eNB_index];//nid_cell];
       rsrp_s = binary_search_float(RSRP_meas_mapping,nElem, rsrp_filtered);
@@ -3887,7 +3887,7 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
                     ue->measReportList[i][j]->numberOfReportsSent = 0;
                     LOG_I(RRC, "[UE %d] Frame %d: A2 triggered, serving RSRP %.1f dBm\n", ctxt_pP->module_id, ctxt_pP->frame,
                           ue->rsrp_db_filtered[eNB_index]);
-                    rrc_ue_generate_MeasurementReport(ctxt_pP, eNB_index);
+                    rrc_ue_generate_MeasurementReport(ctxt_pP, eNB_index, ue->MeasId[i][j]->measId);
                   } else if (!entered && ue->measReportList[i][j] != NULL) {
                     free(ue->measReportList[i][j]);
                     ue->measReportList[i][j] = NULL;
@@ -3914,9 +3914,7 @@ void ue_measurement_report_triggering(protocol_ctxt_t *const ctxt_pP, const uint
 
                     ue->measReportList[i][j]->measId = ue->MeasId[i][j]->measId;
                     ue->measReportList[i][j]->numberOfReportsSent = 0;
-                    rrc_ue_generate_MeasurementReport(
-                      ctxt_pP,
-                      eNB_index);
+                    rrc_ue_generate_MeasurementReport(ctxt_pP, eNB_index, ue->MeasId[i][j]->measId);
                     ue->HandoverInfoUe.measFlag = 1;
                   } else {
                     if(ue->measReportList[i][j] != NULL) {
