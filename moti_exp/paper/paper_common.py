@@ -2,7 +2,7 @@
 from the traffic start: LTE/LTE X2 (build-lte/pcap-paper-lte), NTN/NTN CHO (build/pcap-paper-cho), LTE/NTN and NTN/LTE
 RAT changes by A2 release with redirection (build/pcap-paper-xrat) with a new IP (TAG noiwk) or the same IP
 (interworking without N26, TAG iwk), and the lte2ntn same-IP runs with a GNSS position error (TAG iwk-g<km>km).
-perf/ shows the phenomena, analysis/ the causes. The packet helpers are those of legacy/cmp/cmp_common.py.
+perf/ shows the phenomena (without the same-IP runs), analysis/ the causes. The packet helpers are those of legacy/cmp/cmp_common.py.
 """
 
 import re
@@ -21,14 +21,14 @@ GNSS_KM = (0, 2, 5, 15, 50, 500)
 LTE_LTE = ("LTE/LTE", "black", "--", "../build-lte/pcap-paper-lte", "{kind}-connected")
 NTN_NTN = ("NTN/NTN", "gray", "--", "pcap-paper-cho", "{kind}-{mode}-cho")
 NEW_IP = (
-  ("LTE/NTN, new IP", "#000080", ":", XRAT, "{kind}-lte2ntn-{mode}-redirect-noiwk"),
-  ("NTN/LTE, new IP", "#B22222", ":", XRAT, "{kind}-ntn2lte-{mode}-redirect-noiwk"),
+  ("LTE/NTN", "#000080", "-", XRAT, "{kind}-lte2ntn-{mode}-redirect-noiwk"),
+  ("NTN/LTE", "#B22222", "-", XRAT, "{kind}-ntn2lte-{mode}-redirect-noiwk"),
 )
 SAME_IP = (
-  ("LTE/NTN, same IP", "#000080", "-", XRAT, "{kind}-lte2ntn-{mode}-redirect-iwk"),
-  ("NTN/LTE, same IP", "#B22222", "-", XRAT, "{kind}-ntn2lte-{mode}-redirect-iwk"),
+  ("LTE/NTN (ideal)", "#000080", "--", XRAT, "{kind}-lte2ntn-{mode}-redirect-iwk"),
+  ("NTN/LTE (ideal)", "#B22222", "--", XRAT, "{kind}-ntn2lte-{mode}-redirect-iwk"),
 )
-CURVES = (LTE_LTE, NTN_NTN) + NEW_IP + SAME_IP
+CURVES = (LTE_LTE, NTN_NTN) + NEW_IP
 
 
 def gnss_curve(km):

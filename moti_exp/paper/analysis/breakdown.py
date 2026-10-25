@@ -47,7 +47,7 @@ for mode in MODES:
   for c, fn in ((SAME_IP[0], xrat), (SAME_IP[1], xrat), (NTN_NTN, cho)):
     ds = [d for d in map(fn, all_runs("tcp-dl", mode, c)) if d is not None]
     if ds:
-      rows.append((c[0].replace(", same IP", ""), np.mean(ds, axis=0), len(ds)))
+      rows.append((c[0].replace(" (ideal)", ""), np.mean(ds, axis=0), len(ds)))
   if not rows:
     continue
   f, ax = plt.subplots(figsize=(3.5, 2.0), constrained_layout=True)
