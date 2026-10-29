@@ -9,7 +9,8 @@
 #   trigger  the source cell fades out (gain ramp to -60 dB), nothing else: OAI has no inter-RAT handover command
 #   access   radio loss: the source UE process is killed (no detach) and the target one started at once; an NR target
 #            gets its pre-compensation aids (initial Doppler and drift) but a GNSS position GNSS_ERR m off (500000)
-#   session  as access, with a valid GNSS position
+#   session  as access, with a valid GNSS position; GAP=<s>: no coverage, the target UE starts GAP s after the kill;
+#            lte2lte / ntn2ntn (session only): the target is the source RAT again
 #   redirect the source cell fades out as in trigger; on the A2 report the source asks its core to release the UE
 #            and the release redirects it to the other RAT (no N26: 23.502 4.11.2); once the source UE logs it, the
 #            source process is killed and the target one started as in session, an NR one with its GNSS position
@@ -83,6 +84,11 @@ nr_up() { docker exec -d xr-ue bash -c "exec /build/nr-uesoftmodem -O \$CONF/nru
 utrace() { tn xr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
 wait_utrace() { while awk "BEGIN { exit !($(utrace) < $1) }"; do sleep 0.2; done; }
 ue_kill() { docker exec xr-ue pkill -9 -f $1-uesoftmodem || true; }
+# same-RAT target: recreate the source cells, their logs so far in $out/logs/<cell>-source.log
+new_cells() { local c=lte-enb1; mkdir -p $out/logs; [ $src = nr ] && c="$gnbs"
+  for n in $c; do docker logs $n > $out/logs/$n-source.log 2>&1 || true; done
+  dc rm -sf $c >/dev/null 2>&1
+  if [ $src = lte ]; then dc up -d lte-enb1 2>/dev/null; else dc up -d ntn-gnb1 2>/dev/null; wait_log ntn-gnb1 'Received NGSetupResponse'; fi; }
 # source cell fade-out, 1 s per step: eNB beam gain, NR path loss of both directions (UE client of gNB1: its channel
 # model 0, gNB1's 1; TWO_SAT, UE server: its model 1, gNB1's 0)
 fade() { local mu=0 mg=1; [ -z "$TWO_SAT" ] || { mu=1; mg=0; }
@@ -123,6 +129,7 @@ finish() { traffic_stop; sleep 1
   uncap core mac sgi ue; mkdir -p $out/logs
   for n in lte-enb1 $gnbs; do docker logs $n > $out/logs/$n.log 2>&1 || true; done
   for r in lte nr; do uelog $r > $out/logs/xr-ue-$r.log; done
+  [ -z "$same" ] || uelog $src-source > $out/logs/xr-ue-$src-source.log
   { echo "$dir $mode $STAGE: source $src IP $ip0"
     if [ -n "$t_change" ]; then
       echo "source IP traffic after the change: $(after_change)"
@@ -159,8 +166,15 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   else sleep $T_PRE; t_end=$(awk -v a=$(date +%s.%N) -v b=$T_POST 'BEGIN { printf "%.3f", a + b }'); fi
   case $STAGE in
     trigger) t_change=$(date +%s.%N); ev "change: source fade-out"; fade ;;
-    access|session) tgt=nr; [ $src = nr ] && tgt=lte
+    access|session) tgt=nr; [ $src = nr ] && tgt=lte; [ -z "$same" ] || tgt=$src
       t_change=$(date +%s.%N); ev "change: kill the $src UE, start the $tgt UE"; ue_kill $src
+      # the target UE log replaces the source one: keep it, so that wait_target does not find the source steps
+      [ -z "$same" ] || docker exec xr-ue mv /tmp/$src.log /tmp/$src-source.log
+      [ -z "$GAP" ] || ev "no coverage: $GAP s"
+      # the cells are rfsim clients of the killed UE process and do not reconnect: a new cell (the next satellite),
+      # within the gap
+      [ -z "$same" ] || new_cells
+      [ -z "$GAP" ] || sleep $(awk -v a=$t_change -v e=$(date +%s.%N) -v g=$GAP 'BEGIN { d = a + g - e; print (d > 0 ? d : 0) }')
       if [ $tgt = lte ]; then lte_up; elif [ $STAGE = access ]; then gnss=${GNSS_ERR:-500000}; nr_up $gnss
       else gnss=0; nr_up 0; fi ;;
     redirect) t_change=$(date +%s.%N); ev "change: source fade-out"; fade & local fp=$!
@@ -180,8 +194,9 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   finish; }
 
 usage() { sed -n '2,/^$/p' $0; exit 1; }
-case $1 in lte2ntn) src=lte ;; ntn2lte) src=nr ;; *) usage ;; esac
+case $1 in lte2ntn) src=lte ;; ntn2lte) src=nr ;; lte2lte) src=lte same=1 ;; ntn2ntn) src=nr same=1 ;; *) usage ;; esac
 case $STAGE in base|trigger|access|session|redirect) ;; *) usage ;; esac
+[ -z "$same" ] || [ $STAGE = session ] || usage
 dir=$1
 gnbs=ntn-gnb1 NR_RFSIM=\$RFSIM
 if [ -n "$TWO_SAT" ]; then

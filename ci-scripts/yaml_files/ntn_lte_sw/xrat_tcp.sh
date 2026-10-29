@@ -1,7 +1,7 @@
 #!/bin/bash
 # TCP across a RAT change of one dual-mode UE between LTE and NR NTN, with packet captures (xrat.sh), under
 # build/pcap-xrat/tcp-dl-<lte2ntn|ntn2lte>-<trans|regen>-<stage>-*
-#   [REGEN=1] STAGE=base|trigger|access|session xrat_tcp.sh lte2ntn|ntn2lte [runs]
+#   [REGEN=1] STAGE=base|trigger|access|session [GAP=<s>] xrat_tcp.sh lte2ntn|ntn2lte|lte2lte|ntn2ntn [runs]
 # Traffic: iperf3 from the UPF (client: iperf_core) to the source UE IP (server: iperf_ue in xr-ue), 100 Mbit/s offered,
 # 100 ms reports. thr_rx.csv is the goodput at the UE per 100 ms (ue.pcap).
 
