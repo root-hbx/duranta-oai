@@ -50,6 +50,7 @@ NR_ARFCN=497770 EUTRA_ARFCN=3350  # SSB of the NTN gNB, DL carrier of the eNB (b
 
 dc() { docker compose -p xrat -f xrat.yaml "$@"; }
 reset() { dc down 2>/dev/null || true
+  [ -z "$THROUGHPUT_PROFILE" ] || return 0
   docker rm -f xr-ue lte-enb1 ntn-gnb1 lte-ue lte-enb2 nr-ue ntn-gnb2 ntn-gnb3 >/dev/null 2>&1 || true; }
 ev() { echo "$(date +%s.%3N) $*" | tee -a $out/events.txt; }
 # cap <name> <net> <iface> <filter> [snaplen]
@@ -71,8 +72,8 @@ join_nbr() { [ -n "$TWO_SAT" ] || return 0
 lte_up() { docker exec -d xr-ue bash -c 'mkdir -p /tmp/lte && cd /tmp/lte &&
   /build-lte/conf2uedata -c $CONF/lteue.usim-open5gs.conf -o . > /dev/null &&
   exec /build-lte/lte-uesoftmodem -O $CONF/lteue.rfsim.conf --rfsim --rfsimulator.[0].serveraddr server \
-  --rfsimulator.[0].sync_clients 1 -C 2680000000 -r 25 --ue-rxgain 140 --ue-txgain 120 \
-  --log_config.global_log_options level,nocolor,time $OPT '"$iwk"' > /tmp/lte.log 2>&1'; }
+  --rfsimulator.[0].sync_clients 1 -C 2680000000 -r ${LTE_PRB:-25} --ue-rxgain ${LTE_RXGAIN:-140} --ue-txgain 120 \
+  --log_config.global_log_options level,nocolor,time $OPT $LTE_UE_EXTRA '"$iwk"' > /tmp/lte.log 2>&1'; }
 nr_up() { docker exec -d xr-ue bash -c "exec /build/nr-uesoftmodem -O \$CONF/nrue.uicc.ntn-leo.conf --rfsim \
   --rfsimulator.[0].serveraddr $NR_RFSIM \$PROP_DELAY \$CHAN --channelmod.modellist_rfsimu_1.[0].sat_trace_file \$TRACE0 \
   --position0.x $(awk "BEGIN { printf \"%.1f\", -3310204.0 + $1 }") --position0.y -5006785.1 --position0.z 2157610.7 \
@@ -80,6 +81,18 @@ nr_up() { docker exec -d xr-ue bash -c "exec /build/nr-uesoftmodem -O \$CONF/nru
   --uicc0.opc E8ED289DEBA952E4283B54E88E6183CA --uicc0.pdu_sessions.[0].dnn internet \
   --time-sync-I 0.1 --ntn-initial-time-drift ${UE_DRIFT:--46} --initial-fo ${UE_FO:-56634} \
   --cont-fo-comp ${UE_FO_COMP:-2} ${UE_GNSS:-} $iwk \$LOG \$OPT \$EXTRA > /tmp/nr.log 2>&1"; }
+# Apply the measured thread layout after NR access, when all worker threads exist.
+nr_affinity() {
+  if [ "${THROUGHPUT_PROFILE:-}" = tuned ] && [ -n "$NR_MAIN_CPUS" ]; then
+    docker exec xr-ue bash -c '
+      pid=$(pgrep -x nr-uesoftmodem) || exit 1
+      for thread in /proc/$pid/task/*; do
+        read -r name < "$thread/comm"
+        cpus=$2; [ "$name" != UEthread_0 ] || cpus=$1
+        taskset -pc "$cpus" "${thread##*/}" >/dev/null || exit 1
+      done' bash "$NR_MAIN_CPUS" "$NR_WORKER_CPUS"
+  fi
+}
 # trace time (s) of the NR UE (rfsim server with TWO_SAT)
 utrace() { tn xr-ue "rfsimu vtime" | awk '/TS/ { printf "%.1f\n", $5 / $7 }'; }
 wait_utrace() { while awk "BEGIN { exit !($(utrace) < $1) }"; do sleep 0.2; done; }
@@ -97,12 +110,13 @@ fade() { local mu=0 mg=1; [ -z "$TWO_SAT" ] || { mu=1; mg=0; }
     else tn xr-ue "channelmod modify $mu ploss $g" 0.2 >/dev/null; tn ntn-gnb1 "channelmod modify $mg ploss $g" 0.2 >/dev/null; fi
     ev "source gain $g dB"; sleep 1; done; }
 
-attach_source() { reset; amf_restart; dc up -d xr-ue ntn-gnb1 2>/dev/null
-  wait_log ntn-gnb1 'Received NGSetupResponse'
+attach_source() { reset; amf_restart || return 1
+  dc up -d xr-ue ntn-gnb1 2>/dev/null || return 1
+  wait_log ntn-gnb1 'Received NGSetupResponse' || return 1
   if [ $src = lte ]; then lte_up; sleep 3; else nr_up 0; fi
-  dc up -d lte-enb1 2>/dev/null
+  dc up -d lte-enb1 2>/dev/null || return 1
   wait_ip 90 || { echo "no source UE IP"; return 1; }
-  [ $src = lte ] || join_nbr; }
+  [ $src = lte ] || { nr_affinity || return 1; join_nbr; }; }
 
 # seconds left until t_end
 left() { awk -v e=$(date +%s.%N) -v t=$t_end 'BEGIN { d = t - e; printf "%d", (d > 0 ? d : 0) }'; }
@@ -126,6 +140,7 @@ after_change() { docker run --rm -v $out:/cap --entrypoint tcpdump $CORE_IMAGE -
     else print "none" }'; }
 
 finish() { traffic_stop; sleep 1
+  [ "$tgt" != nr ] || [ -z "$TWO_SAT" ] || ev "trace $(utrace) s: end"
   uncap core mac sgi ue; mkdir -p $out/logs
   for n in lte-enb1 $gnbs; do docker logs $n > $out/logs/$n.log 2>&1 || true; done
   for r in lte nr; do uelog $r > $out/logs/xr-ue-$r.log; done
@@ -148,7 +163,9 @@ finish() { traffic_stop; sleep 1
       fi
     fi
     report; } | tee $out/summary.txt
-  docker run --rm -v $out:/cap --entrypoint chown $CORE_IMAGE -R $(id -u):$(id -g) /cap; }
+  local result=${PIPESTATUS[0]}
+  docker run --rm -v $out:/cap --entrypoint chown $CORE_IMAGE -R $(id -u):$(id -g) /cap
+  return $result; }
 
 run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   attach_source || return 1
@@ -158,7 +175,14 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   cap core host $core_if 'not tcp port 4043 and not tcp port 4044 and not udp port 9999' $SNAP
   cap mac host $core_if 'udp port 9999' 300; cap sgi container:${CORE_CT}upf ogstun "$SGI_FILTER" $SNAP
   cap ue container:xr-ue any "$radio" $SNAP; sleep 1
-  ip0=$ip; ev "UE IP $ip ($src)"; traffic; t0=$(date +%s.%N)
+  if [ -n "$THROUGHPUT_PROFILE" ]; then
+    UE_FO_COMP=${UE_FO_COMP:-2}
+    declare -p THROUGHPUT_PROFILE TRAFFIC LTE_PRB LTE_RXGAIN ENB1_EXTRA GNB1_EXTRA GNB2_EXTRA UE_EXTRA \
+      UE_FO UE_DRIFT UE_FO_COMP SAT_TRACE1 SAT_TRACE2 IPERF_EXTRA T_START T_CHANGE T_RUN > "$out/parameters.env"
+    printf 'UE_CPUS=%q\nNR_MAIN_CPUS=%q\nNR_WORKER_CPUS=%q\n' "$UE_CPUS" "$NR_MAIN_CPUS" "$NR_WORKER_CPUS" \
+      >> "$out/parameters.env"
+  fi
+  ip0=$ip; ev "UE IP $ip ($src)"; traffic || { finish; return 1; }; t0=$(date +%s.%N)
   if [ -n "$TWO_SAT" ]; then
     if [ $src = nr ]; then ev "trace $(utrace) s: traffic"; wait_utrace $T_CHANGE; ev "trace $(utrace) s: change time"
     else sleep $(( T_CHANGE - T_START )); fi
@@ -183,15 +207,18 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
         ev "redirection: kill the $src UE, start the $tgt UE"; ue_kill $src
         if [ $tgt = lte ]; then lte_up; else gnss=${GNSS_ERR:-0}; nr_up $gnss; fi
       else ev "no redirection"; fi
-      wait $fp ;;
+      wait $fp || true ;;
   esac
   if [ -n "$tgt" ]; then
-    if wait_target $(left); then ip1=$ip; ev "target UE IP $ip1"; [ $tgt = lte ] || join_nbr
+    if wait_target $(left); then ip1=$ip; ev "target UE IP $ip1"
+      [ $tgt = lte ] || { nr_affinity || { finish; return 1; }; join_nbr
+        [ -z "$TWO_SAT" ] || ev "trace $(utrace) s: target attached"; }
       probe=$(docker exec ${CORE_CT}upf ping -c 5 -i 0.2 -W 2 $ip1 | awk '/transmitted/ { print $4 "/" $1 }'); ev "UPF probe $probe"
     fi
   fi
   sleep $(left)
-  finish; }
+  finish || return 1
+  [ -z "$THROUGHPUT_PROFILE" ] || [ "$ip1" = "$ip0" ]; }
 
 usage() { sed -n '2,/^$/p' $0; exit 1; }
 case $1 in lte2ntn) src=lte ;; ntn2lte) src=nr ;; lte2lte) src=lte same=1 ;; ntn2ntn) src=nr same=1 ;; *) usage ;; esac
@@ -209,11 +236,14 @@ if [ -n "$TWO_SAT" ]; then
   if [ $src = lte ]; then
     # gNB1 on sat 1, gNB2 on sat 0, both traces from T_CHANGE (time from 0, UTC kept), so the NR UE starts at that
     # trace time; initial Doppler and drift of sat 1 there (tools/ntn/calc_ntn_parameters.py)
-    mkdir -p $repo/build/xrat-trace
+    traces=("$SAT_TRACE1" "$SAT_TRACE2")
+    if [ -n "$XRAT_TRACE_DIR" ]; then trace_dir=$(mktemp -d "$XRAT_TRACE_DIR.XXXXXX")
+    else trace_dir=$repo/build/xrat-trace; mkdir -p "$trace_dir"; fi
     for k in 0 1; do awk -F, -v c=$T_CHANGE 'NR == 1 { print; next } $1 >= c { $1 -= c; print }' OFS=, \
-      $repo/tools/ntn/data/ho_pair_sat$k.csv > $repo/build/xrat-trace/ho_pair_sat${k}_$T_CHANGE.csv; done
-    export SAT_TRACE1=../../../build/xrat-trace/ho_pair_sat1_$T_CHANGE.csv
-    export SAT_TRACE2=../../../build/xrat-trace/ho_pair_sat0_$T_CHANGE.csv
+      "$repo/tools/ntn/data/${traces[$k]}" > "$trace_dir/ho_pair_sat${k}_$T_CHANGE.csv"; done
+    trace_rel=$(realpath --relative-to "$repo/tools/ntn/data" "$trace_dir")
+    export SAT_TRACE1=$trace_rel/ho_pair_sat1_$T_CHANGE.csv
+    export SAT_TRACE2=$trace_rel/ho_pair_sat0_$T_CHANGE.csv
     export UE_GNSS="--ntn-gnss-utc-start $(( U0 + T_CHANGE * 1000 ))" UE_FO=50710 UE_DRIFT=-41
     [ -n "$REGEN" ] && export UE_DRIFT=-20
   fi
@@ -225,6 +255,11 @@ if [ $STAGE = redirect ]; then
   a2=--gNBs.[0].nr_measurement_configuration.A2
   export GNB1_EXTRA="$GNB1_EXTRA $a2.redirect_eutra_arfcn $EUTRA_ARFCN $a2.threshold ${A2_NR:-115} $a2.time_to_trigger 1"
 fi
-for r in $(seq ${2:-1}); do run $r || echo "run $r: no source attach"; done
+[ -z "$THROUGHPUT_PROFILE" ] || source ./throughput.env
+status=0
+for r in $(seq ${2:-1}); do
+  if ! run $r; then echo "run $r failed" >&2; status=1; [ -z "$THROUGHPUT_PROFILE" ] || break; fi
+done
 reset
 [ -z "$runs" ] || tar czf $PCAP_DIR/xrat-$KIND-$dir-$mode-$STAGE${TAG:+-$TAG}-$(date +%m%d-%H%M%S).tar.gz -C $PCAP_DIR $runs
+exit $status

@@ -85,83 +85,72 @@ time advanced about 1.22–1.32 seconds per wall second; LTE ranged about 0.51�
 The rates describe these RFsim runs. This integration keeps the same selected parameters and adds an explicit
 algorithm selector; its checks are recorded separately from the frozen campaign.
 
-## Applying the selected settings
+## Running the eight cases
 
-Use the existing LTE/NR startup commands and add the following command-line overrides.
-LTE and NR must use matching base-station and UE resource settings.
+The reusable settings are in
+[`throughput.env`](../ci-scripts/yaml_files/ntn_lte_sw/throughput.env).
+[`throughput.sh`](../ci-scripts/yaml_files/ntn_lte_sw/throughput.sh) selects those settings and calls the existing
+`xrat_tcp.sh` / `xrat.sh` A2 redirection procedure. `xrat.yaml` extends the original LTE/NTN Compose files.
+Future experiments can source the same parameter file after setting their orbit calibration and capability path.
 
-```text
-LTE eNB, DL and UL:
-  --eNBs.[0].component_carriers.[0].N_RB_DL 100
-LTE eNB, UL additionally:
-  --MACRLCs.[0].max_ul_rb_index 27
-LTE UE:
-  -r 100 --ue-rxgain 128
+### Prepare the existing experiment environment
 
-Both NR gNBs:
-  --gNBs.[0].servingCellConfigCommon.[0].dl_carrierBandwidth 52
-  --gNBs.[0].servingCellConfigCommon.[0].ul_carrierBandwidth 52
-  --gNBs.[0].servingCellConfigCommon.[0].initialDLBWPlocationAndBandwidth 14025
-  --gNBs.[0].servingCellConfigCommon.[0].initialULBWPlocationAndBandwidth 14025
-  --gNBs.[0].force_256qam_off 0
-  --gNBs.[0].force_UL256qam_off 1
-  --gNBs.[0].maxMIMO_layers 1
-NR UE:
-  --cells.[0].N_RB_DL 52 --cells.[0].rf_freq 2490830000
-  --uecap_file /absolute/run-input/nr-uecap.xml
-All participating RFsim nodes:
-  --rfsimulator.[0].channelmod_optimized 1
+Use the same environment as `xrat.sh`: the `ntn-dev` runtime image (or `OAI_IMG`), Docker Compose v2, and the
+orbitango EPC/5GC selected by `CORE=private` in `core.sh`, with a matching LTE/NR subscription and UE data routes.
+Coordinate an exclusive experiment slot: the original procedure initializes the AMF per run, uses fixed RAN
+names/addresses and privileged containers, and captures on the host/core interfaces. The wrapper checks for
+occupied RAN/capture names; subscription and core use are coordinated locally.
 
-TCP sender, DL and UL:
-  -b 100M --fq-rate 35M
-TCP sender, UL additionally:
-  -w 384K
+Build the current source with CMake/Ninja in that image, including the LTE/NR softmodems, `conf2uedata` and their
+dynamic modules. Point `LTE_BUILD` and `NR_BUILD` to the matching build directories. Both may point to the same
+build containing all five executables. `compile.sh` rebuilds the original, already configured `build`/`build-lte`
+layout. The new runs mount binaries/modules read-only and keep runtime files inside the containers.
+
+The measured inputs are included alongside the original files:
+
+- `tools/ntn/data/ho_pair_sat0_900.csv` and `ho_pair_sat1_900.csv`: the original satellite pair extended to 900 s.
+- `targets/PROJECTS/GENERIC-NR-5GC/CONF/uecap_n254_10mhz.xml`: n254, 15-kHz, 10-MHz, one layer, 256-QAM DL/64-QAM UL.
+
+Runs read these files directly. LTE→NTN uses the original script's cut at simulated second 131, saving each
+slice under a new `build/throughput-trace.*` directory. The original 360-second traces remain unchanged.
+
+Select CPUs using `lscpu -e=CPU,CORE,SOCKET`. Set `UE_CPUS`, `NR_MAIN_CPUS` and `NR_WORKER_CPUS`; main and workers
+use different physical cores inside `UE_CPUS`, leaving the main CPU's SMT sibling unused. Set `ENB_CPUS`,
+`GNB1_CPUS` and `GNB2_CPUS` for the other reserved cores. `xrat.sh` applies the main/worker layout after NR access.
+The original container CPU defaults are preserved for other experiments. Host-side plotting requires Matplotlib.
+
+### Run one case or the matrix
+
+From the repository root, with the environment above prepared:
+
+```bash
+# One TRANS downlink, LTE to NTN, one repetition.
+bash ci-scripts/yaml_files/ntn_lte_sw/throughput.sh lte2ntn 1
+
+# One REGEN uplink, NTN to LTE.
+REGEN=1 TRAFFIC=UL bash ci-scripts/yaml_files/ntn_lte_sw/throughput.sh ntn2lte 1
+
+# TRANS/REGEN × DL/UL × both directions, one repetition of each.
+bash ci-scripts/yaml_files/ntn_lte_sw/throughput.sh all 1
+
+# Same current source at the 25/25 PRB reference settings.
+THROUGHPUT_PROFILE=baseline bash ci-scripts/yaml_files/ntn_lte_sw/throughput.sh all 1
 ```
 
-The existing `uecap_ports1.xml` supplies the UE capability structure. Generate a per-run n254/10-MHz capability
-from it as follows, then pass its absolute path to the NR UE. This is the transformation used in the measured runs:
+`THROUGHPUT_PROFILE=tuned` is the default. `baseline` selects 25/25 PRB and the original RFsim function while
+retaining the current NR UE correctness fix. The historical pre-fix baseline belongs to its original commit.
+Use `PCAP_DIR` to select a result root; the default is `build/pcap-throughput`. The default DN is the UPF, as in
+the original scripts; `DN_CONTAINER` and `DN_IP` select an independently prepared DN with working UE routes.
+Traffic cleanup signals only this run's iperf PIDs. The batch is serial and stops on a failed case.
 
-```python
-from pathlib import Path
-import xml.etree.ElementTree as ET
-
-source = Path("targets/PROJECTS/GENERIC-NR-5GC/CONF/uecap_ports1.xml")
-output = Path("/absolute/run-input/nr-uecap.xml")
-tree = ET.parse(source)
-root = tree.getroot()
-for band in root.findall(".//bandNR"):
-    band.text = "254"
-for direction in ("DL", "UL"):
-    for element in root.findall(".//supportedSubcarrierSpacing" + direction):
-        element.clear()
-        ET.SubElement(element, "kHz15")
-    for element in root.findall(".//supportedBandwidth" + direction):
-        element.clear()
-        ET.SubElement(ET.SubElement(element, "fr1"), "mhz10")
-for parent in root.iter():
-    for child in list(parent):
-        if child.tag in ("maxNumberMIMO-LayersPDSCH", "pusch-256QAM", "channelBW-90mhz"):
-            parent.remove(child)
-for element in root.findall(".//supportedModulationOrderUL"):
-    element.clear()
-    ET.SubElement(element, "qam64")
-with output.open("xb") as stream:
-    tree.write(stream, encoding="utf-8", xml_declaration=True)
-```
-
-For the calibrated two-satellite traces, forward LTE→NTN uses initial frequency offset 50760 Hz and
-NTN→LTE uses 52281 Hz at the new carrier. TRANS keeps UE drift −41/−42 and compensation mode 2;
-REGEN keeps drift −20/−21 and compensation mode 3. Source-side and target-side IWK requests, A2 thresholds,
-propagation and satellite-motion settings follow the existing experiment procedure.
-
-The source provides one implementation for all eight combinations. Change `REGEN`, traffic direction and
-LTE→NTN/NTN→LTE per case; keep the radio and TCP settings above. The original Compose files already constrain
-container CPUs. The selected measurements additionally place `UEthread_0` on a physical core separate from the NR
-worker threads, leaving its SMT sibling free. This is a runtime affinity choice; it adds no UE scheduling code.
-
-Use the repository's CMake/Ninja build for LTE/NR softmodems, `conf2uedata` and the RFsim, coding, parameter and
-Telnet modules. Use the same runtime libraries as the build. Experiment admission, shared-core coordination,
-subscription selection, container ownership and per-run output paths belong to the local run procedure.
+Each run preserves `parameters.env`, both iperf JSON logs (`iperf_ue.txt`, `iperf_core.txt`), `events.txt`,
+modem logs, PCAPs, `summary.txt`, `thr_rx.csv` and `throughput.png` in a separate case directory.
+The CSV preserves the 100-ms receiver intervals; the figure aggregates their bytes into 1-second wall-time bins,
+as in the existing paper throughput plots. The summary's full-run mean includes the interruption.
+DL receives at the UE; UL receives at the DN. Sender JSON retains TCP retransmission,
+RTT and congestion-window fields provided by iperf. See the [iperf3 manual](https://software.es.net/iperf/invoking.html)
+for its endpoint and interval semantics. `moti_exp/throughput/bw.py` also accepts a saved receiver log for offline
+CSV/plot generation; choose new output names when rerunning it.
 
 ## Measurement conditions
 
@@ -169,8 +158,9 @@ The measurements use a persistent TCP connection and application receiver byte c
 For DL, the DN sends and UE receives; for UL, the UE sends and DN receives. Keep packet captures for timing and
 retransmission analysis; count overlapping TCP sequence ranges once when deriving payload throughput.
 
-Generate 900-second traces with the existing `tools/ntn/generate_orbital_trace.py`, using
-`tools/ntn/data/starlink_dtc_ho_pair.tle` at `2026-10-18T06:56:20Z`. Forward traces start at simulated second 131;
+The checked-in 900-second traces were generated from `tools/ntn/data/starlink_dtc_ho_pair.tle` at
+`2026-10-18T06:56:20Z` using `tools/ntn/generate_orbital_trace.py` and Skyfield 1.55.
+Forward traces start at simulated second 131;
 traffic runs for 40 wall seconds before the fade. Reverse traffic starts at simulated second 61 and the fade at
 131; the original paper script starts reverse traffic at second 91. Each selected run measures 180 wall seconds.
 Record both simulation and wall time, actual modem arguments, receiver goodput, RTT, retransmissions and redirection

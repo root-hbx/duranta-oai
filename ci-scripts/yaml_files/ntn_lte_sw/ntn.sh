@@ -20,7 +20,7 @@ source ./core.sh
 [ -n "$THREE_SAT" ] && export TWO_SAT=1 SAT_TRACE3=ho_pair_sat2.csv GNB1_NEIGHBOURS=0xe02/12345680/2
 if [ -n "$TWO_SAT" ]; then
   # tools/ntn/calc_ntn_parameters.py for ho_pair_sat0.csv (gNB1 serves at the start)
-  export SAT_TRACE1=ho_pair_sat0.csv SAT_TRACE2=ho_pair_sat1.csv UE_FO=52230 UE_GNSS="--ntn-gnss-utc-start 1792306580000"
+  export SAT_TRACE1=${SAT_TRACE1:-ho_pair_sat0.csv} SAT_TRACE2=${SAT_TRACE2:-ho_pair_sat1.csv} UE_FO=52230 UE_GNSS="--ntn-gnss-utc-start 1792306580000"
   export SAT_CLOCK=$(for k in 0 1 2 3; do echo --channelmod.modellist_rfsimu_1.[$k].sat_trace_common_clock 1; done)
   if [ -n "$REGEN" ]; then
     export SAT=SAT_LEO_REGEN TA_COMMON=0 TA_DRIFT=0 KOFFSET=${KOFFSET:-14} PROP_DELAY=3 UE_DRIFT=-21 UE_FO_COMP=3
