@@ -403,6 +403,7 @@ void term_nr_ue_transport(PHY_VARS_NR_UE *ue)
   const int N_RB_DL = ue->frame_parms.N_RB_DL;
   const int N_RB_UL = ue->frame_parms.N_RB_UL;
   free_nr_ue_dl_harq(ue->dl_harq_processes, NR_MAX_HARQ_PROCESSES, N_RB_DL);
+  free_nr_ue_dl_harq(ue->si_harq_processes, 1, N_RB_DL);
   free_nr_ue_ul_harq(ue->ul_harq_processes, NR_MAX_HARQ_PROCESSES, N_RB_UL, ue->frame_parms.nb_antennas_tx);
   free_nr_ue_pdsch_buffers(ue->pdsch_scratch, ue->pdsch_num_actors);
   free_and_zero(ue->pdsch_scratch);
@@ -542,6 +543,7 @@ void nr_init_pdsch_buffers(pdsch_scratch_t *buffers, int num_actors, const NR_DL
 void init_nr_ue_transport(PHY_VARS_NR_UE *ue)
 {
   nr_init_dl_harq_processes(ue->dl_harq_processes, NR_MAX_HARQ_PROCESSES, ue->frame_parms.N_RB_DL);
+  nr_init_dl_harq_processes(ue->si_harq_processes, 1, ue->frame_parms.N_RB_DL);
   nr_init_ul_harq_processes(ue->ul_harq_processes, NR_MAX_HARQ_PROCESSES, ue->frame_parms.N_RB_UL, ue->frame_parms.nb_antennas_tx);
   const int num_actors = get_nrUE_params()->num_dl_actors > 0 ? get_nrUE_params()->num_dl_actors : 1;
   ue->pdsch_num_actors = num_actors;
@@ -560,6 +562,8 @@ void init_phy_nr_measurements(PHY_VARS_NR_UE *ue)
 
 void clean_UE_harq(PHY_VARS_NR_UE *UE)
 {
+  for (int cw = 0; cw < 2; cw++)
+    init_downlink_harq_status(&UE->si_harq_processes[cw][0]);
   for (int harq_pid = 0; harq_pid < NR_MAX_HARQ_PROCESSES; harq_pid++) {
     for (int i = 0; i < 2; i++) {
       NR_DL_UE_HARQ_t *dl_harq_process = &UE->dl_harq_processes[i][harq_pid];

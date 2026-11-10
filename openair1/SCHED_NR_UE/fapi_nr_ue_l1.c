@@ -21,7 +21,7 @@ const char *const dl_pdu_type[] = {"DCI", "DLSCH", "RA_DLSCH", "SI_DLSCH", "P_DL
 const char *const ul_pdu_type[] = {"PRACH", "PUCCH", "PUSCH", "SRS"};
 
 static void configure_dlsch(NR_UE_DLSCH_t *dlsch,
-                            NR_DL_UE_HARQ_t *harq_list,
+                            NR_DL_UE_HARQ_t *dlsch_harq,
                             fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config_pdu,
                             NR_UE_MAC_INST_t *mac,
                             int cw_idx,
@@ -34,7 +34,6 @@ static void configure_dlsch(NR_UE_DLSCH_t *dlsch,
 
   LOG_D(PHY,"Configure DLSCH for pid = %d\n", current_harq_pid);
 
-  NR_DL_UE_HARQ_t *dlsch_harq = &harq_list[current_harq_pid];
   dlsch->cw_info = dlsch_config_pdu->cw_info[cw_idx];
 
   if (dlsch->cw_info.Nl == 0) {
@@ -173,8 +172,6 @@ static void nr_ue_scheduled_response_dl(NR_UE_MAC_INST_t *mac,
       case FAPI_NR_DL_CONFIG_TYPE_DLSCH:
       case FAPI_NR_DL_CONFIG_TYPE_P_DLSCH: {
         fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_config_pdu = &pdu->dlsch_config_pdu.dlsch_config_rel15;
-        phy_data->n_dlsch_codewords = dlsch_config_pdu->n_codewords;
-        phy_data->dlsch_config = *dlsch_config_pdu;
 
         nr_rnti_type_t rnti_type;
         int n_codewords = 1;
@@ -197,10 +194,20 @@ static void nr_ue_scheduled_response_dl(NR_UE_MAC_INST_t *mac,
             AssertFatal(false, "Unexpected DL DLSCH-family pdu_type %d\n", pdu->pdu_type);
         }
 
+        const bool is_si = rnti_type == TYPE_SI_RNTI_;
+        NR_UE_DLSCH_t *dlsch_list = is_si ? phy_data->si_dlsch : phy_data->dlsch;
+        if (is_si) {
+          phy_data->si_dlsch_config = *dlsch_config_pdu;
+          phy_data->n_si_dlsch_codewords = n_codewords;
+        } else {
+          phy_data->dlsch_config = *dlsch_config_pdu;
+          phy_data->n_dlsch_codewords = n_codewords;
+        }
         for (int c = 0; c < n_codewords; c++) {
-          NR_UE_DLSCH_t *dlsch = &phy_data->dlsch[c];
+          NR_UE_DLSCH_t *dlsch = &dlsch_list[c];
           dlsch->rnti_type = rnti_type;
-          configure_dlsch(dlsch, phy->dl_harq_processes[c], dlsch_config_pdu, mac, c, pdu->dlsch_config_pdu.rnti, dl_config);
+          NR_DL_UE_HARQ_t *harq = nr_ue_dl_harq(phy, c, dlsch_config_pdu->harq_process_nbr, rnti_type);
+          configure_dlsch(dlsch, harq, dlsch_config_pdu, mac, c, pdu->dlsch_config_pdu.rnti, dl_config);
         }
       } break;
       case FAPI_NR_CONFIG_TA_COMMAND:
