@@ -76,6 +76,7 @@ typedef enum { SIMU_ROLE_SERVER = 1, SIMU_ROLE_CLIENT } simuRole;
 #define RFSIMU_ENABLE_BEAMS "enable_beams"
 #define RFSIMU_BEAM_GAINS "beam_gains"
 #define RFSIMU_SYNC_CLIENTS "sync_clients"
+#define RFSIMU_CHANNELMOD_OPTIMIZED "channelmod_optimized"
 
 #define RFSIM_CONFIG_HELP_OPTIONS                                                                  \
   " list of comma separated options to enable rf simulator functionalities. Available options: \n" \
@@ -103,6 +104,7 @@ typedef enum { SIMU_ROLE_SERVER = 1, SIMU_ROLE_CLIENT } simuRole;
   BOOLPARAM(RFSIMU_ENABLE_BEAMS,        "<enable simplified beam simulation>\n",    simBool,NULL,                             0),                     \
   STRINGPARAM(RFSIMU_BEAM_GAINS,        "<per-beam gain in dB, one value per gNB beam id>\n", simOpt, NULL,                   NULL),                  \
   BOOLPARAM(RFSIMU_SYNC_CLIENTS,        "<server: start clients on a 1024-frame boundary (synchronous cells)>\n", simBool, NULL, 0),                 \
+  BOOLPARAM(RFSIMU_CHANNELMOD_OPTIMIZED, "<use recurrent phase rotation for channel samples>\n", simBool, NULL, 0), \
 };
 // clang-format on
 static void getset_currentchannels_type(char *buf, int debug, webdatadef_t *tdata, telnet_printfunc_t prnt);
@@ -201,6 +203,7 @@ typedef struct {
   double rx_freq;
   double tx_bw;
   int channelmod;
+  decltype(&rxAddInput) apply_channel;
   double chan_pathloss;
   double chan_forgetfact;
   uint64_t chan_offset;
@@ -530,6 +533,9 @@ static void rfsimulator_readconfig(rfsimulator_state_t *rfsimulator)
   rfsimulator->prop_delay_ms = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_PROP_DELAY)->dblptr);
   rfsimulator->wait_timeout = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_WAIT_TIMEOUT)->iptr);
   rfsimulator->sync_clients = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_SYNC_CLIENTS)->iptr);
+  const bool optimized = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_CHANNELMOD_OPTIMIZED)->iptr);
+  rfsimulator->apply_channel = optimized ? rxAddInputOptimized : rxAddInput;
+  LOG_I(HW, "RFsim channel calculation: %s\n", optimized ? "optimized" : "legacy");
 
   rfsim_beam_ctrl_t *beam_ctrl = rfsimulator->beam_ctrl;
   beam_ctrl->enable_beams = *(gpd(rfsimuParam, sizeofArray(rfsimuParams), RFSIMU_ENABLE_BEAMS)->iptr);
@@ -1273,7 +1279,7 @@ static void rfsimulator_read_internal(rfsimulator_state_t *t,
                                  rx_beams[aarx],
                                  input);
 
-          rxAddInput(input, temp_array[aarx], aarx, ptr->channel_model, nsamps);
+          t->apply_channel(input, temp_array[aarx], aarx, ptr->channel_model, nsamps);
         }
       } else {
         // Apply propagation delay

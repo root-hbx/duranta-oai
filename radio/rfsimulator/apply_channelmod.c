@@ -563,3 +563,76 @@ void rxAddInput(c16_t **input_sig, cf_t *after_channel_sig, int rxAnt, channel_d
         channelDesc->path_loss_dB,
         10 * log10(noise_per_sample));
 }
+
+// Use a bounded oscillator recurrence rather than evaluating exp(j*phase) for
+// every sample. Re-anchor from the original accumulated phase every 256 samples;
+// keep the RNG call order, phase accumulator and channel model unchanged.
+typedef struct {
+  double phase, step, re, im, step_re, step_im;
+  bool rotate;
+} channel_oscillator_t;
+
+static inline void add_channel_sample(cf_t *out,
+                                      struct complexd sample,
+                                      double gain,
+                                      double noise,
+                                      channel_oscillator_t *osc,
+                                      int i)
+{
+  if (osc->rotate) {
+    const double re = sample.r * osc->re - sample.i * osc->im;
+    sample.i = sample.i * osc->re + sample.r * osc->im;
+    sample.r = re;
+    osc->phase += osc->step;
+    if ((i & 255) == 255) {
+      osc->re = cos(osc->phase);
+      osc->im = sin(osc->phase);
+    } else {
+      const double next_re = osc->re * osc->step_re - osc->im * osc->step_im;
+      osc->im = osc->im * osc->step_re + osc->re * osc->step_im;
+      osc->re = next_re;
+    }
+  }
+  out->r += sample.r * gain + noise * gaussZiggurat(0.0, 1.0);
+  out->i += sample.i * gain + noise * gaussZiggurat(0.0, 1.0);
+}
+
+void rxAddInputOptimized(c16_t **input_sig, cf_t *after_channel_sig, int rxAnt, channel_desc_t *channelDesc, int nbSamples)
+{
+  const double gain = pow(10, channelDesc->path_loss_dB / 20.0);
+  const double noise = pow(10, channelDesc->noise_power_dB / 10.0) * 256;
+  double phase = channelDesc->Doppler_phase_cur[rxAnt];
+  phase -= 2 * M_PI * round(phase / (2 * M_PI));
+  channel_oscillator_t osc = {.phase = phase,
+                             .step = channelDesc->Doppler_phase_inc,
+                             .rotate = channelDesc->Doppler_phase_inc != 0.0};
+  if (osc.rotate) {
+    osc.re = cos(phase);
+    osc.im = sin(phase);
+    osc.step_re = cos(osc.step);
+    osc.step_im = sin(osc.step);
+  }
+  if (channelDesc->nb_tx == 1 && channelDesc->channel_length == 1) {
+    const struct complexd h = channelDesc->ch[rxAnt][0];
+    const c16_t *in = input_sig[0];
+    for (int i = 0; i < nbSamples; i++) {
+      const struct complexd sample = {.r = in[i].r * h.r - in[i].i * h.i,
+                                       .i = in[i].i * h.r + in[i].r * h.i};
+      add_channel_sample(&after_channel_sig[i], sample, gain, noise, &osc, i);
+    }
+  } else {
+    for (int i = 0; i < nbSamples; i++) {
+      struct complexd sample = {0};
+      for (int tx = 0; tx < channelDesc->nb_tx; tx++) {
+        const struct complexd *h = channelDesc->ch[rxAnt + tx * channelDesc->nb_rx];
+        for (int l = 0; l < channelDesc->channel_length; l++) {
+          const c16_t in = input_sig[tx][i - l + channelDesc->channel_length - 1];
+          sample.r += in.r * h[l].r - in.i * h[l].i;
+          sample.i += in.i * h[l].r + in.r * h[l].i;
+        }
+      }
+      add_channel_sample(&after_channel_sig[i], sample, gain, noise, &osc, i);
+    }
+  }
+  channelDesc->Doppler_phase_cur[rxAnt] = osc.phase;
+}
