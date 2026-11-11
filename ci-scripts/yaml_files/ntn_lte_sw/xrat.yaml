@@ -9,31 +9,49 @@ services:
     extends: {file: ntn.yaml, service: nr-ue}
     container_name: xr-ue
     working_dir: /tmp
+    cpuset: ${UE_CPUS:-0-3}
+    environment:
+      LD_LIBRARY_PATH: /build:/build-lte
+      LTE_PRB: ${LTE_PRB:-25}
+      LTE_RXGAIN: ${LTE_RXGAIN:-140}
+      LTE_UE_EXTRA: ${LTE_UE_EXTRA:-}
     networks:
       core: {ipv4_address: "${CORE_NET:-172.22}.0.61"}
     volumes:
       - ../../..:/oai-ran:ro
-      - ${NR_BUILD:-../../../build}:/build
-      - ${LTE_BUILD:-../../../build-lte}:/build-lte
+      - ${NR_BUILD:-../../../build}:/build:ro
+      - ${LTE_BUILD:-../../../build-lte}:/build-lte:ro
     command: sleep infinity
 
   lte-enb1:
     extends: {file: lte.yaml, service: lte-enb1}
+    working_dir: /tmp
+    cpuset: ${ENB_CPUS:-4-7}
+    environment:
+      LD_LIBRARY_PATH: /build
     volumes:
       - ../../..:/oai-ran:ro
-      - ${LTE_BUILD:-../../../build-lte}:/build
+      - ${LTE_BUILD:-../../../build-lte}:/build:ro
 
   ntn-gnb1:
     extends: {file: ntn.yaml, service: ntn-gnb1}
+    working_dir: /tmp
+    cpuset: ${GNB1_CPUS:-4-7}
+    environment:
+      LD_LIBRARY_PATH: /build
     volumes:
       - ../../..:/oai-ran:ro
-      - ${NR_BUILD:-../../../build}:/build
+      - ${NR_BUILD:-../../../build}:/build:ro
 
   ntn-gnb2:
     extends: {file: ntn.yaml, service: ntn-gnb2}
+    working_dir: /tmp
+    cpuset: ${GNB2_CPUS:-8-11}
+    environment:
+      LD_LIBRARY_PATH: /build
     volumes:
       - ../../..:/oai-ran:ro
-      - ${NR_BUILD:-../../../build}:/build
+      - ${NR_BUILD:-../../../build}:/build:ro
 
 networks:
   core:

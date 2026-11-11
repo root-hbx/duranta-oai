@@ -1100,7 +1100,10 @@ static int nr_ue_process_dci_dl_10(NR_UE_MAC_INST_t *mac,
 
   int nb_re_dmrs = ((dlsch_pdu->dmrsConfigType == NFAPI_NR_DMRS_TYPE1) ? 6 : 4) * dlsch_pdu->n_dmrs_cdm_groups;
   int nb_rb_oh = mac->sc_info.xOverhead_PDSCH ? nb_rb_oh = 6 * (1 + *mac->sc_info.xOverhead_PDSCH) : 0;
-  NR_UE_DL_HARQ_STATUS_t *current_harq = &mac->dl_harq_info[dci->harq_pid.val][0];
+  // SI has no retransmission state shared with a C-RNTI HARQ process.
+  NR_UE_DL_HARQ_STATUS_t si_harq = {0};
+  NR_UE_DL_HARQ_STATUS_t *current_harq = rnti_type == TYPE_SI_RNTI_
+                                              ? &si_harq : &mac->dl_harq_info[dci->harq_pid.val][0];
   if (!get_cw_info(current_harq,
                    dlsch_pdu,
                    dl_conf_req->pdu_type,
@@ -1284,6 +1287,8 @@ static int nr_ue_process_dci_dl_11(NR_UE_MAC_INST_t *mac,
   fapi_nr_dl_config_request_t *dl_config = get_dl_config_request(mac, slot);
   fapi_nr_dl_config_request_pdu_t *dl_conf_req = &dl_config->dl_config_list[dl_config->number_pdus];
 
+  // The request entry is reused after each DCI callback, including SI grants.
+  dl_conf_req->pdu_type = FAPI_NR_DL_CONFIG_TYPE_DLSCH;
   dl_conf_req->dlsch_config_pdu.rnti = dci_ind->rnti;
 
   fapi_nr_dl_config_dlsch_pdu_rel15_t *dlsch_pdu = &dl_conf_req->dlsch_config_pdu.dlsch_config_rel15;

@@ -343,6 +343,8 @@ typedef struct PHY_VARS_NR_UE_s {
   NR_UE_PRS *prs_vars[NR_MAX_PRS_COMB_SIZE];
   uint8_t prs_active_gNBs;
   NR_DL_UE_HARQ_t dl_harq_processes[2][NR_MAX_HARQ_PROCESSES];
+  // SI uses process zero in a separate bank; only that process is allocated.
+  NR_DL_UE_HARQ_t si_harq_processes[2][NR_MAX_HARQ_PROCESSES];
   NR_UL_UE_HARQ_t ul_harq_processes[NR_MAX_HARQ_PROCESSES];
 
   // Scrambling IDs used in PUSCH DMRS
@@ -469,6 +471,12 @@ typedef struct PHY_VARS_NR_UE_s {
   } *pdsch_scratch;
   int pdsch_num_actors;
 } PHY_VARS_NR_UE;
+
+static inline NR_DL_UE_HARQ_t *nr_ue_dl_harq(PHY_VARS_NR_UE *ue, int cw, int pid, nr_rnti_type_t type)
+{
+  AssertFatal(cw >= 0 && cw < 2 && pid >= 0 && pid < NR_MAX_HARQ_PROCESSES, "Invalid DL HARQ index\n");
+  return type == TYPE_SI_RNTI_ ? &ue->si_harq_processes[cw][0] : &ue->dl_harq_processes[cw][pid];
+}
 typedef struct pdsch_scratch_s pdsch_scratch_t;
 
 typedef struct {
@@ -579,6 +587,10 @@ typedef struct nr_phy_data_s {
   fapi_nr_dl_config_dlsch_pdu_rel15_t dlsch_config;
   NR_UE_DLSCH_t dlsch[2];
   int n_dlsch_codewords;
+  // Preserve SI independently when SI and C-RNTI grants arrive in the same slot.
+  fapi_nr_dl_config_dlsch_pdu_rel15_t si_dlsch_config;
+  NR_UE_DLSCH_t si_dlsch[2];
+  int n_si_dlsch_codewords;
   // Sidelink Rx action decided by MAC
   sl_nr_rx_config_type_enum_t sl_rx_action;
   int num_csirs;
