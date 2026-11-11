@@ -1,0 +1,32 @@
+# Output mounts for the shared xrat services; radio configuration comes from xrat.yaml.
+x-output: &output
+  working_dir: /sec2-work
+  labels:
+    org.duranta.sec2: "${SEC2_RUN_ID}"
+
+services:
+  xr-ue:
+    <<: *output
+    volumes:
+      - "${NR_BUILD}:/build:ro"
+      - "${LTE_BUILD}:/build-lte:ro"
+      - "${SEC2_RUN_DIR}/work/xr-ue:/sec2-work"
+      - "${SEC2_TRACE_DIR}:/oai-ran/build/xrat-trace:ro"
+  lte-enb1:
+    <<: *output
+    volumes:
+      - "${LTE_BUILD}:/build:ro"
+      - "${SEC2_RUN_DIR}/work/lte-enb1:/sec2-work"
+      - "${SEC2_TRACE_DIR}:/oai-ran/build/xrat-trace:ro"
+  ntn-gnb1:
+    <<: *output
+    volumes:
+      - "${NR_BUILD}:/build:ro"
+      - "${SEC2_RUN_DIR}/work/ntn-gnb1:/sec2-work"
+      - "${SEC2_TRACE_DIR}:/oai-ran/build/xrat-trace:ro"
+  ntn-gnb2:
+    <<: *output
+    volumes:
+      - "${NR_BUILD}:/build:ro"
+      - "${SEC2_RUN_DIR}/work/ntn-gnb2:/sec2-work"
+      - "${SEC2_TRACE_DIR}:/oai-ran/build/xrat-trace:ro"

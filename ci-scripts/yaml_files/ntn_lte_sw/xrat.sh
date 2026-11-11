@@ -170,8 +170,9 @@ finish() { traffic_stop; sleep 1
 run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   attach_source || return 1
   [ -z "$IWK" ] || iwk=--iwk-without-n26
-  [ -z "$TWO_SAT" ] || [ $src = lte ] || wait_utrace $T_START
-  out=$PCAP_DIR/$KIND-$dir-$mode-$STAGE${TAG:+-$TAG}-$r-$(date +%m%d-%H%M%S); mkdir -p $out; runs+=" ${out##*/}"; echo "## $out"
+  [ -z "$TWO_SAT" ] || [ $src = lte ] || wait_utrace $T_START || return 1
+  out=${XRAT_RUN_DIR:-$PCAP_DIR/$KIND-$dir-$mode-$STAGE${TAG:+-$TAG}-$r-$(date +%m%d-%H%M%S)}
+  mkdir -p "$out"; runs+=" ${out##*/}"; echo "## $out"
   cap core host $core_if 'not tcp port 4043 and not tcp port 4044 and not udp port 9999' $SNAP
   cap mac host $core_if 'udp port 9999' 300; cap sgi container:${CORE_CT}upf ogstun "$SGI_FILTER" $SNAP
   cap ue container:xr-ue any "$radio" $SNAP; sleep 1
@@ -184,7 +185,8 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   fi
   ip0=$ip; ev "UE IP $ip ($src)"; traffic || { finish; return 1; }; t0=$(date +%s.%N)
   if [ -n "$TWO_SAT" ]; then
-    if [ $src = nr ]; then ev "trace $(utrace) s: traffic"; wait_utrace $T_CHANGE; ev "trace $(utrace) s: change time"
+    if [ $src = nr ]; then
+      ev "trace $(utrace) s: traffic"; wait_utrace $T_CHANGE || return 1; ev "trace $(utrace) s: change time"
     else sleep $(( T_CHANGE - T_START )); fi
     t_end=$(awk -v a=$t0 -v b=$T_RUN 'BEGIN { printf "%.3f", a + b }')
   else sleep $T_PRE; t_end=$(awk -v a=$(date +%s.%N) -v b=$T_POST 'BEGIN { printf "%.3f", a + b }'); fi
@@ -220,6 +222,8 @@ run() { local r=$1 t0 t_end; t_change= tgt= ip1= probe= iwk= gnss=
   finish || return 1
   [ -z "$THROUGHPUT_PROFILE" ] || [ "$ip1" = "$ip0" ]; }
 
+# Optional detailed capture for callers that collect registration and phase timings.
+[ -z "$XRAT_CAPTURE" ] || source "$XRAT_CAPTURE"
 usage() { sed -n '2,/^$/p' $0; exit 1; }
 case $1 in lte2ntn) src=lte ;; ntn2lte) src=nr ;; lte2lte) src=lte same=1 ;; ntn2ntn) src=nr same=1 ;; *) usage ;; esac
 case $STAGE in base|trigger|access|session|redirect) ;; *) usage ;; esac
